@@ -119,8 +119,8 @@ async function createInWorkspace(payload) {
   return http("POST", `${BASE}/collections?workspace=${WORKSPACE_ID}`, payload);
 }
 
-async function update(uid, payload) {
-  return http("PUT", `${BASE}/collections/${uid}`, payload);
+async function deleteCollection(uid) {
+  return http("DELETE", `${BASE}/collections/${uid}`);
 }
 
 function approxBytes(obj) {
@@ -142,14 +142,14 @@ async function main() {
   const existingUid = await findUidByName(COLLECTION_NAME);
 
   if (existingUid) {
-    console.log("Updating collection:", COLLECTION_NAME, "uid:", existingUid);
-    await update(existingUid, payload);
-    console.log("✅ Updated");
-  } else {
-    console.log("Creating collection:", COLLECTION_NAME);
-    const out = await createInWorkspace(payload);
-    console.log("✅ Created uid:", out?.collection?.uid);
+    console.log("Found existing collection:", COLLECTION_NAME, "uid:", existingUid);
+    console.log("Deleting collection before recreate to avoid flaky updates…");
+    await deleteCollection(existingUid);
   }
+
+  console.log("Creating collection:", COLLECTION_NAME);
+  const out = await createInWorkspace(payload);
+  console.log("✅ Created uid:", out?.collection?.uid);
 }
 
 main().catch((e) => {
