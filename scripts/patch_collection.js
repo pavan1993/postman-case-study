@@ -9,35 +9,51 @@ const outReal = "artifacts/collection.real.json";
 const rawDoc = JSON.parse(fs.readFileSync(inPath, "utf8"));
 
 const PRE_REQUEST = `
-const now = Math.floor(Date.now() / 1000);
-const exp = Number(pm.environment.get("token_exp") || 0);
-const token = pm.environment.get("access_token");
+async function ensureAuth() {
+  const now = Math.floor(Date.now() / 1000);
+  const expires = Number(pm.environment.get("token_exp") || 0);
+  let token = pm.environment.get("access_token");
+  const needsRefresh = !token || now >= (expires - 30);
 
-function attach(t) {
-  pm.request.headers.upsert({ key: "Authorization", value: \`Bearer \${t}\` });
+  if (needsRefresh) {
+    pm.console.log("Fetching new access token…");
+    const response = await new Promise((resolve, reject) => {
+      pm.sendRequest(
+        {
+          url: pm.environment.get("base_url") + "/auth/token",
+          method: "POST",
+          header: { "Content-Type": "application/json" },
+          body: { mode: "raw", raw: JSON.stringify({ grant_type: "client_credentials" }) },
+        },
+        (err, res) => {
+          if (err) return reject(err);
+          if (!res) return reject(new Error("Empty auth response"));
+          const json = res.json();
+          if (!json?.access_token) return reject(new Error("Auth response missing access_token"));
+          pm.environment.set("access_token", json.access_token);
+          pm.environment.set("token_exp", String(now + Number(json.expires_in || 300)));
+          resolve(json.access_token);
+        }
+      );
+    });
+
+    token = response;
+  }
+
+  pm.request.headers.upsert({ key: "Authorization", value: \`Bearer \${token}\` });
+  pm.variables.set("last_attached_auth_header", pm.request.headers.get("Authorization") || "");
 }
 
-if (!token || now > exp - 30) {
-  pm.sendRequest({
-    url: pm.environment.get("base_url") + "/auth/token",
-    method: "POST",
-    header: { "Content-Type": "application/json" },
-    body: { mode: "raw", raw: JSON.stringify({ grant_type: "client_credentials" }) }
-  }, (err, res) => {
-    if (err) throw err;
-    const j = res.json();
-    pm.environment.set("access_token", j.access_token);
-    pm.environment.set("token_exp", String(now + (j.expires_in || 300)));
-    attach(j.access_token);
-  });
-} else {
-  attach(token);
-}
+ensureAuth().catch((err) => {
+  console.error("Auth pre-request failed:", err);
+  throw err;
+});
 `.trim();
 
 const COLLECTION_TEST = `
-pm.test("Authorization header attached", () => {
-  pm.expect(pm.request.headers.get("Authorization")).to.match(/^Bearer\\s.+/);
+pm.test("Authorization header attached to outgoing request", () => {
+  const header = pm.variables.get("last_attached_auth_header");
+  pm.expect(header, "Missing Authorization header").to.match(/^Bearer\\s.+/);
 });
 `.trim();
 
