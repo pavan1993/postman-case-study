@@ -16,7 +16,6 @@ function headers() {
   return {
     "X-Api-Key": API_KEY,
     "Content-Type": "application/json",
-    // Often required by Postman API Builder endpoints; harmless otherwise.
     "Accept": "application/vnd.api.v10+json",
   };
 }
@@ -28,34 +27,18 @@ async function post(url, body) {
     body: JSON.stringify(body),
   });
   const text = await res.text();
-
   let json;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    json = { raw: text };
-  }
-
-  if (!res.ok) {
-    throw new Error(`POST ${url} failed: ${res.status}\n${text}`);
-  }
+  try { json = JSON.parse(text); } catch { json = { raw: text }; }
+  if (!res.ok) throw new Error(`POST ${url} failed: ${res.status}\n${text}`);
   return json;
 }
 
 async function get(url) {
   const res = await fetch(url, { method: "GET", headers: headers() });
   const text = await res.text();
-
   let json;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    json = { raw: text };
-  }
-
-  if (!res.ok) {
-    throw new Error(`GET ${url} failed: ${res.status}\n${text}`);
-  }
+  try { json = JSON.parse(text); } catch { json = { raw: text }; }
+  if (!res.ok) throw new Error(`GET ${url} failed: ${res.status}\n${text}`);
   return json;
 }
 
@@ -63,27 +46,19 @@ function toAbsoluteUrl(maybeUrl) {
   if (!maybeUrl) return null;
   if (maybeUrl.startsWith("http://") || maybeUrl.startsWith("https://")) return maybeUrl;
   if (maybeUrl.startsWith("/")) return `${BASE}${maybeUrl}`;
-  // Edge case: missing leading slash
   return `${BASE}/${maybeUrl}`;
 }
 
-async function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function main() {
   const yaml = fs.readFileSync(YAML_PATH, "utf8");
 
-  // 1) Create spec
+  // 1) Create spec (POC flow). For full idempotent spec updates, we can add lookup+update later.
   const specCreateBody = {
     name: "Payment Refund API",
     type: "OPENAPI:3.0",
-    files: [
-      {
-        path: "payment-refund-api-openapi.yaml",
-        content: yaml,
-      },
-    ],
+    files: [{ path: "payment-refund-api-openapi.yaml", content: yaml }],
   };
 
   console.log("Creating spec...");
@@ -109,13 +84,9 @@ async function main() {
   const genRes = await post(`${BASE}/specs/${specId}/generations/collection`, genBody);
   console.log("Generation response:\n", JSON.stringify(genRes, null, 2));
 
-  // Generation often returns a task object with a URL (sometimes relative).
   const taskId = genRes?.task?.id || genRes?.taskId || genRes?.id;
   const pollUrlRaw = genRes?.task?.url || genRes?.url;
 
-  // Build poll endpoint:
-  // - Prefer provided pollUrl if present
-  // - Otherwise fall back to /tasks/{taskId}
   const pollEndpointRaw = pollUrlRaw || (taskId ? `/tasks/${taskId}` : null);
   const pollEndpoint = toAbsoluteUrl(pollEndpointRaw);
 
@@ -126,20 +97,18 @@ async function main() {
 
   console.log("Polling:", pollEndpoint);
 
-  // 3) Poll until done
-  let status = "RUNNING";
+  // 3) Poll until complete
   let task = null;
+  let status = "RUNNING";
 
   for (let i = 0; i < 40; i++) {
     await sleep(2000);
     task = await get(pollEndpoint);
 
-    // Try common shapes
     status =
       task?.task?.status ||
       task?.status ||
       task?.data?.status ||
-      task?.result?.status ||
       "UNKNOWN";
 
     console.log(`Status [${i + 1}/40]:`, status);
@@ -151,7 +120,7 @@ async function main() {
     }
   }
 
-  // 4) Determine generated collection UID
+  // 4) Locate generated collection uid
   const out = task?.task?.result || task?.result || task?.data?.result || task;
   let collectionUid =
     out?.collectionUid ||
@@ -160,11 +129,9 @@ async function main() {
     out?.generatedCollectionUid ||
     out?.generated_collection_uid;
 
-  // Fallback: ask Postman for the list of generated collections for this spec
+  // Fallback: list generated collections for this spec (endpoint shape can vary)
   if (!collectionUid) {
     console.log("Looking up generated collections for spec...");
-    // NOTE: Depending on Postman API behavior, this may return a list.
-    // If it errors, paste the error back and we’ll adjust to the right listing endpoint.
     const genList = await get(`${BASE}/specs/${specId}/generations/collection`);
     const items =
       genList?.collections ||
@@ -172,21 +139,18 @@ async function main() {
       genList?.generatedCollections ||
       genList?.generated_collections ||
       [];
-
     if (Array.isArray(items) && items.length > 0) {
-      // pick the most recent-ish item (assumes first is most recent)
       collectionUid = items[0]?.uid || items[0]?.collectionUid || items[0]?.id;
     }
   }
 
   if (!collectionUid) {
-    console.error("Could not determine collection UID.\nTask output:\n", JSON.stringify(task, null, 2));
+    console.error("Could not determine collection UID.\nTask:\n", JSON.stringify(task, null, 2));
     process.exit(1);
   }
 
-  console.log("collectionUid:", collectionUid);
+  console.log("generated collectionUid:", collectionUid);
 
-  // 5) Fetch generated collection JSON
   const collection = await get(`${BASE}/collections/${collectionUid}`);
 
   fs.mkdirSync("artifacts", { recursive: true });

@@ -1,4 +1,4 @@
-name: Ingest Refund API into Postman
+name: Ingest Refund API into Postman (Canonical Upsert)
 
 on:
   workflow_dispatch:
@@ -15,23 +15,35 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install deps
-        run: npm init -y && npm i node-fetch@3
+      - name: Init + install deps
+        run: |
+          npm init -y
+          node -e "const fs=require('fs');const p=require('./package.json');p.type='module';fs.writeFileSync('package.json', JSON.stringify(p,null,2));"
+          npm i node-fetch@3
 
-      - name: Run ingestion
+      - name: Run ingestion (spec -> generated collection JSON)
         env:
           POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
           POSTMAN_WORKSPACE_ID: ${{ secrets.POSTMAN_WORKSPACE_ID }}
         run: node scripts/ingest.js
-      
-      - name: Patch generated collection (auth + scripts)
+
+      - name: Patch generated collection (auth + scripts + canonical naming)
+        env:
+          POSTMAN_SERVICE_KEY: ${{ secrets.POSTMAN_SERVICE_KEY }}
         run: node scripts/patch_collection.js
-      
-      - name: Create environments
+
+      - name: Upsert canonical collection into Postman (no hardcoded IDs)
+        env:
+          POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
+          POSTMAN_CANONICAL_COLLECTION_NAME: ${{ format('Payments / {0} (Canonical)', secrets.POSTMAN_SERVICE_KEY) }}
+        run: node scripts/upsert_collection.js
+
+      - name: Upsert environments (Dev/QA/UAT/Prod) into Postman (no duplicates)
         env:
           POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
           POSTMAN_WORKSPACE_ID: ${{ secrets.POSTMAN_WORKSPACE_ID }}
-        run: node scripts/create_envs.js
+          POSTMAN_SERVICE_KEY: ${{ secrets.POSTMAN_SERVICE_KEY }}
+        run: node scripts/upsert_envs.js
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
