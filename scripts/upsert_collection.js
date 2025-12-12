@@ -16,7 +16,7 @@ if (!API_KEY || !WORKSPACE_ID || !COLLECTION_FILE || !COLLECTION_NAME) {
 const BASE = "https://api.getpostman.com";
 
 // Retry config
-const RETRY_STATUSES = new Set([500, 502, 503, 504]);
+const RETRY_STATUSES = new Set([500, 502, 503, 504, 429]);
 const MAX_RETRIES = 6; // total attempts = 1 + retries
 const BASE_DELAY_MS = 800;
 
@@ -30,6 +30,12 @@ function headers() {
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function isRateLimited(status, responseBody) {
+  if (status === 429) return true;
+  const errName = responseBody?.error?.name || responseBody?.error?.code;
+  return errName ? errName.toLowerCase().includes("ratelimit") : false;
 }
 
 async function http(method, url, body, attempt = 1) {
@@ -48,9 +54,14 @@ async function http(method, url, body, attempt = 1) {
   }
 
   if (!res.ok) {
-    // Retry only on selected 5xx
-    if (RETRY_STATUSES.has(res.status) && attempt < MAX_RETRIES) {
-      const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1);
+    const shouldRetry =
+      (RETRY_STATUSES.has(res.status) || isRateLimited(res.status, json)) &&
+      attempt < MAX_RETRIES;
+
+    if (shouldRetry) {
+      // Rate-limit the next attempt more aggressively so we do not trip global quotas.
+      const backoffMultiplier = isRateLimited(res.status, json) ? 2 : 1;
+      const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1) * backoffMultiplier;
       console.warn(
         `⚠️ ${method} ${url} failed with ${res.status}. Retrying in ${delay}ms (attempt ${attempt}/${MAX_RETRIES})`
       );
