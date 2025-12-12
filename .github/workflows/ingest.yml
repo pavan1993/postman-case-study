@@ -32,9 +32,10 @@ jobs:
           POSTMAN_SERVICE_KEY: ${{ secrets.POSTMAN_SERVICE_KEY }}
         run: node scripts/patch_collection.js
 
-      - name: Upsert canonical collection into Postman (no hardcoded IDs)
+      - name: Upsert canonical collection into Postman (workspace-scoped, no hardcoded IDs)
         env:
           POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
+          POSTMAN_WORKSPACE_ID: ${{ secrets.POSTMAN_WORKSPACE_ID }}
           POSTMAN_CANONICAL_COLLECTION_NAME: ${{ format('Payments / {0} (Canonical)', secrets.POSTMAN_SERVICE_KEY) }}
         run: node scripts/upsert_collection.js
 

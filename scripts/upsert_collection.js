@@ -2,10 +2,15 @@ import fs from "fs";
 import fetch from "node-fetch";
 
 const API_KEY = process.env.POSTMAN_API_KEY;
+const WORKSPACE_ID = process.env.POSTMAN_WORKSPACE_ID;
 const CANONICAL_NAME = process.env.POSTMAN_CANONICAL_COLLECTION_NAME;
 
 if (!API_KEY) {
   console.error("Missing POSTMAN_API_KEY");
+  process.exit(1);
+}
+if (!WORKSPACE_ID) {
+  console.error("Missing POSTMAN_WORKSPACE_ID");
   process.exit(1);
 }
 if (!CANONICAL_NAME) {
@@ -33,39 +38,64 @@ async function http(method, url, body) {
   const text = await res.text();
   let json;
   try { json = JSON.parse(text); } catch { json = { raw: text }; }
-  if (!res.ok) throw new Error(`${method} ${url} failed: ${res.status}\n${text}`);
+
+  if (!res.ok) {
+    throw new Error(`${method} ${url} failed: ${res.status}\n${text}`);
+  }
   return json;
 }
 
-async function findCollectionUidByName(name) {
-  // NOTE: This lists all collections accessible by the API key. In large orgs you'd page/filter.
-  const list = await http("GET", `${BASE}/collections`);
-  const items = list?.collections || [];
+async function listCollectionsInWorkspace() {
+  // Workspace-scoped list (critical)
+  const out = await http("GET", `${BASE}/collections?workspace=${WORKSPACE_ID}`);
+  return out?.collections || [];
+}
+
+async function findCollectionUidByNameInWorkspace(name) {
+  const items = await listCollectionsInWorkspace();
   const match = items.find((c) => c?.name === name);
   return match?.uid || null;
+}
+
+async function createCollectionInWorkspace(body) {
+  // Workspace-scoped create (critical)
+  return http("POST", `${BASE}/collections?workspace=${WORKSPACE_ID}`, body);
+}
+
+async function updateCollection(uid, body) {
+  // Update by uid; this does not move workspaces (fine)
+  return http("PUT", `${BASE}/collections/${uid}`, body);
 }
 
 async function main() {
   const patched = JSON.parse(fs.readFileSync(PATCHED_PATH, "utf8"));
 
-  // Ensure name is canonical (defensive)
+  // Ensure the canonical name is applied
   if (patched?.collection?.info?.name) {
     patched.collection.info.name = CANONICAL_NAME;
   }
 
-  const existingUid = await findCollectionUidByName(CANONICAL_NAME);
+  // 1) Find canonical collection IN THE TARGET WORKSPACE
+  const existingUid = await findCollectionUidByNameInWorkspace(CANONICAL_NAME);
 
   if (existingUid) {
-    console.log("Updating canonical collection:", CANONICAL_NAME);
+    console.log("Updating canonical collection IN workspace:", WORKSPACE_ID);
+    console.log("name:", CANONICAL_NAME);
     console.log("uid:", existingUid);
-    await http("PUT", `${BASE}/collections/${existingUid}`, patched);
-    console.log("✅ Updated collection");
-  } else {
-    console.log("Creating canonical collection:", CANONICAL_NAME);
-    const out = await http("POST", `${BASE}/collections`, patched);
-    const uid = out?.collection?.uid;
-    console.log("✅ Created collection uid:", uid);
+    await updateCollection(existingUid, patched);
+    console.log("✅ Updated canonical collection");
+    return;
   }
+
+  // 2) If not found in workspace, create it in that workspace
+  console.log("Canonical collection not found in workspace. Creating...");
+  console.log("workspace:", WORKSPACE_ID);
+  console.log("name:", CANONICAL_NAME);
+
+  const created = await createCollectionInWorkspace(patched);
+  const newUid = created?.collection?.uid;
+  console.log("✅ Created canonical collection in workspace. uid:", newUid);
+  console.log("👉 If you previously created the same name in 'My Workspace', delete that old one to avoid confusion.");
 }
 
 main().catch((e) => {
