@@ -55,6 +55,12 @@ jobs:
           POSTMAN_SERVICE_KEY: ${{ secrets.POSTMAN_SERVICE_KEY }}
         run: node scripts/upsert_envs.js
 
+      - name: Delete auto-generated collection (cleanup)
+        env:
+          POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
+          POSTMAN_WORKSPACE_ID: ${{ secrets.POSTMAN_WORKSPACE_ID }}
+        run: node scripts/delete_generated_collection.js
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
