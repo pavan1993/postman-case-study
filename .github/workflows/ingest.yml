@@ -1,4 +1,4 @@
-name: Ingest Refund API into Postman (Canonical Upsert)
+name: Ingest Refund API into Postman (Mock + Real Canonicals)
 
 on:
   workflow_dispatch:
@@ -27,16 +27,25 @@ jobs:
           POSTMAN_WORKSPACE_ID: ${{ secrets.POSTMAN_WORKSPACE_ID }}
         run: node scripts/ingest.js
 
-      - name: Patch generated collection (auth + scripts + canonical naming)
+      - name: Patch generated collection into two variants (Mock + Real)
         env:
           POSTMAN_SERVICE_KEY: ${{ secrets.POSTMAN_SERVICE_KEY }}
         run: node scripts/patch_collection.js
 
-      - name: Upsert canonical collection into Postman (workspace-scoped, no hardcoded IDs)
+      - name: Upsert Mock collection into workspace
         env:
           POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
           POSTMAN_WORKSPACE_ID: ${{ secrets.POSTMAN_WORKSPACE_ID }}
-          POSTMAN_CANONICAL_COLLECTION_NAME: ${{ format('Payments / {0} (Canonical)', secrets.POSTMAN_SERVICE_KEY) }}
+          POSTMAN_COLLECTION_FILE: artifacts/collection.mock.json
+          POSTMAN_COLLECTION_NAME: ${{ format('Payments / {0} (Mock)', secrets.POSTMAN_SERVICE_KEY) }}
+        run: node scripts/upsert_collection.js
+
+      - name: Upsert Real collection into workspace
+        env:
+          POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
+          POSTMAN_WORKSPACE_ID: ${{ secrets.POSTMAN_WORKSPACE_ID }}
+          POSTMAN_COLLECTION_FILE: artifacts/collection.real.json
+          POSTMAN_COLLECTION_NAME: ${{ format('Payments / {0} (Real)', secrets.POSTMAN_SERVICE_KEY) }}
         run: node scripts/upsert_collection.js
 
       - name: Upsert environments (Dev/QA/UAT/Prod) into Postman (no duplicates)
