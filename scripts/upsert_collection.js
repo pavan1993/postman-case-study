@@ -38,6 +38,21 @@ function isRateLimited(status, responseBody) {
   return errName ? errName.toLowerCase().includes("ratelimit") : false;
 }
 
+function rateLimitDelay(headers) {
+  if (!headers || typeof headers.get !== "function") return null;
+  const resetRaw = headers.get("x-ratelimit-reset");
+  if (!resetRaw) return null;
+
+  const resetEpoch = Number(resetRaw);
+  if (!Number.isFinite(resetEpoch)) return null;
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const deltaSec = resetEpoch - nowSec;
+  if (!Number.isFinite(deltaSec) || deltaSec <= 0) return null;
+
+  return deltaSec * 1000;
+}
+
 async function http(method, url, body, attempt = 1) {
   const res = await fetch(url, {
     method,
@@ -59,9 +74,18 @@ async function http(method, url, body, attempt = 1) {
       attempt < MAX_RETRIES;
 
     if (shouldRetry) {
-      // Rate-limit the next attempt more aggressively so we do not trip global quotas.
-      const backoffMultiplier = isRateLimited(res.status, json) ? 2 : 1;
-      const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1) * backoffMultiplier;
+      const rateLimited = isRateLimited(res.status, json);
+      let delay = BASE_DELAY_MS * Math.pow(2, attempt - 1);
+
+      if (rateLimited) {
+        const resetDelay = rateLimitDelay(res.headers);
+        if (resetDelay) {
+          delay = Math.max(delay * 2, resetDelay);
+        } else {
+          delay *= 2;
+        }
+      }
+
       console.warn(
         `⚠️ ${method} ${url} failed with ${res.status}. Retrying in ${delay}ms (attempt ${attempt}/${MAX_RETRIES})`
       );

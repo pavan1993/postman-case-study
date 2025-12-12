@@ -110,11 +110,12 @@ async function main() {
       task?.status ||
       task?.data?.status ||
       "UNKNOWN";
+    const normalizedStatus = typeof status === "string" ? status.toUpperCase() : String(status);
 
     console.log(`Status [${i + 1}/40]:`, status);
 
-    if (["SUCCESS", "COMPLETED", "DONE"].includes(status)) break;
-    if (["FAILED", "ERROR"].includes(status)) {
+    if (["SUCCESS", "COMPLETED", "DONE"].includes(normalizedStatus)) break;
+    if (["FAILED", "ERROR"].includes(normalizedStatus)) {
       console.error("Task failed:\n", JSON.stringify(task, null, 2));
       process.exit(1);
     }
