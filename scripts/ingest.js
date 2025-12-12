@@ -16,16 +16,26 @@ function headers() {
   return {
     "X-Api-Key": API_KEY,
     "Content-Type": "application/json",
-    // Some endpoints require this accept header; harmless if not needed:
-    "Accept": "application/vnd.api.v10+json"
+    // Often required by Postman API Builder endpoints; harmless otherwise.
+    "Accept": "application/vnd.api.v10+json",
   };
 }
 
 async function post(url, body) {
-  const res = await fetch(url, { method: "POST", headers: headers(), body: JSON.stringify(body) });
+  const res = await fetch(url, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify(body),
+  });
   const text = await res.text();
+
   let json;
-  try { json = JSON.parse(text); } catch { json = { raw: text }; }
+  try {
+    json = JSON.parse(text);
+  } catch {
+    json = { raw: text };
+  }
+
   if (!res.ok) {
     throw new Error(`POST ${url} failed: ${res.status}\n${text}`);
   }
@@ -35,12 +45,30 @@ async function post(url, body) {
 async function get(url) {
   const res = await fetch(url, { method: "GET", headers: headers() });
   const text = await res.text();
+
   let json;
-  try { json = JSON.parse(text); } catch { json = { raw: text }; }
+  try {
+    json = JSON.parse(text);
+  } catch {
+    json = { raw: text };
+  }
+
   if (!res.ok) {
     throw new Error(`GET ${url} failed: ${res.status}\n${text}`);
   }
   return json;
+}
+
+function toAbsoluteUrl(maybeUrl) {
+  if (!maybeUrl) return null;
+  if (maybeUrl.startsWith("http://") || maybeUrl.startsWith("https://")) return maybeUrl;
+  if (maybeUrl.startsWith("/")) return `${BASE}${maybeUrl}`;
+  // Edge case: missing leading slash
+  return `${BASE}/${maybeUrl}`;
+}
+
+async function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 async function main() {
@@ -53,9 +81,9 @@ async function main() {
     files: [
       {
         path: "payment-refund-api-openapi.yaml",
-        content: yaml
-      }
-    ]
+        content: yaml,
+      },
+    ],
   };
 
   console.log("Creating spec...");
@@ -63,7 +91,7 @@ async function main() {
 
   const specId = specRes?.spec?.id || specRes?.id || specRes?.data?.id;
   if (!specId) {
-    console.error("Could not find specId in response:", JSON.stringify(specRes, null, 2));
+    console.error("Could not find specId in response:\n", JSON.stringify(specRes, null, 2));
     process.exit(1);
   }
   console.log("specId:", specId);
@@ -74,70 +102,91 @@ async function main() {
     name: "Payment Refund API - Generated",
     options: {
       folderStrategy: "Tags",
-      enableOptionalParameters: true
-    }
+      enableOptionalParameters: true,
+    },
   };
 
   const genRes = await post(`${BASE}/specs/${specId}/generations/collection`, genBody);
+  console.log("Generation response:\n", JSON.stringify(genRes, null, 2));
 
-  // Generation often returns a task object / id
+  // Generation often returns a task object with a URL (sometimes relative).
   const taskId = genRes?.task?.id || genRes?.taskId || genRes?.id;
-  const pollUrl = genRes?.task?.url || genRes?.url;
+  const pollUrlRaw = genRes?.task?.url || genRes?.url;
 
-  if (!taskId && !pollUrl) {
-    console.log("Generation response:", JSON.stringify(genRes, null, 2));
-    console.error("Could not find taskId/url to poll. Paste this output back to ChatGPT.");
+  // Build poll endpoint:
+  // - Prefer provided pollUrl if present
+  // - Otherwise fall back to /tasks/{taskId}
+  const pollEndpointRaw = pollUrlRaw || (taskId ? `/tasks/${taskId}` : null);
+  const pollEndpoint = toAbsoluteUrl(pollEndpointRaw);
+
+  if (!pollEndpoint) {
+    console.error("Could not determine poll endpoint (no taskId/url).");
     process.exit(1);
   }
+
+  console.log("Polling:", pollEndpoint);
 
   // 3) Poll until done
   let status = "RUNNING";
   let task = null;
 
-  const pollEndpoint = pollUrl || `${BASE}/tasks/${taskId}`;
-  console.log("Polling:", pollEndpoint);
-
-  for (let i = 0; i < 30; i++) {
-    await new Promise(r => setTimeout(r, 2000));
+  for (let i = 0; i < 40; i++) {
+    await sleep(2000);
     task = await get(pollEndpoint);
-    status = task?.task?.status || task?.status || task?.data?.status;
 
-    console.log("Status:", status);
-    if (status === "SUCCESS" || status === "COMPLETED") break;
-    if (status === "FAILED" || status === "ERROR") {
-      console.error("Task failed:", JSON.stringify(task, null, 2));
+    // Try common shapes
+    status =
+      task?.task?.status ||
+      task?.status ||
+      task?.data?.status ||
+      task?.result?.status ||
+      "UNKNOWN";
+
+    console.log(`Status [${i + 1}/40]:`, status);
+
+    if (["SUCCESS", "COMPLETED", "DONE"].includes(status)) break;
+    if (["FAILED", "ERROR"].includes(status)) {
+      console.error("Task failed:\n", JSON.stringify(task, null, 2));
       process.exit(1);
     }
   }
 
-  // 4) Fetch generated collection
-  // Depending on the API response, the task output may include a collection uid or collection id.
-  // We'll attempt to locate it in common places.
+  // 4) Determine generated collection UID
   const out = task?.task?.result || task?.result || task?.data?.result || task;
   let collectionUid =
     out?.collectionUid ||
     out?.collection?.uid ||
     out?.collection_uid ||
-    out?.generatedCollectionUid;
+    out?.generatedCollectionUid ||
+    out?.generated_collection_uid;
 
   // Fallback: ask Postman for the list of generated collections for this spec
   if (!collectionUid) {
     console.log("Looking up generated collections for spec...");
+    // NOTE: Depending on Postman API behavior, this may return a list.
+    // If it errors, paste the error back and we’ll adjust to the right listing endpoint.
     const genList = await get(`${BASE}/specs/${specId}/generations/collection`);
-    // If this endpoint returns a list, pick the most recent
-    const items = genList?.collections || genList?.data || genList?.generatedCollections || [];
+    const items =
+      genList?.collections ||
+      genList?.data ||
+      genList?.generatedCollections ||
+      genList?.generated_collections ||
+      [];
+
     if (Array.isArray(items) && items.length > 0) {
+      // pick the most recent-ish item (assumes first is most recent)
       collectionUid = items[0]?.uid || items[0]?.collectionUid || items[0]?.id;
     }
   }
 
   if (!collectionUid) {
-    console.error("Could not determine collection UID. Task output:", JSON.stringify(task, null, 2));
+    console.error("Could not determine collection UID.\nTask output:\n", JSON.stringify(task, null, 2));
     process.exit(1);
   }
 
   console.log("collectionUid:", collectionUid);
 
+  // 5) Fetch generated collection JSON
   const collection = await get(`${BASE}/collections/${collectionUid}`);
 
   fs.mkdirSync("artifacts", { recursive: true });
@@ -145,7 +194,7 @@ async function main() {
   console.log("Wrote artifacts/collection.generated.json");
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
