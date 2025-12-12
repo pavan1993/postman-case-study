@@ -129,6 +129,17 @@ async function main() {
     out?.generatedCollectionUid ||
     out?.generated_collection_uid;
 
+  // Some tasks embed resources array (seen in newer async API responses)
+  if (!collectionUid) {
+    const resources = task?.details?.resources || out?.resources;
+    if (Array.isArray(resources) && resources.length > 0) {
+      collectionUid =
+        resources[0]?.uid ||
+        resources[0]?.id ||
+        (resources[0]?.url ? resources[0].url.split("/").pop() : null);
+    }
+  }
+
   // Fallback: list generated collections for this spec (endpoint shape can vary)
   if (!collectionUid) {
     console.log("Looking up generated collections for spec...");
