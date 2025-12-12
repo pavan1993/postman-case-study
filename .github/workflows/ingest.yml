@@ -24,6 +24,9 @@ jobs:
           POSTMAN_WORKSPACE_ID: ${{ secrets.POSTMAN_WORKSPACE_ID }}
         run: node scripts/ingest.js
       
+      - name: Patch generated collection (auth + scripts)
+        run: node scripts/patch_collection.js
+      
       - name: Create environments
         env:
           POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
