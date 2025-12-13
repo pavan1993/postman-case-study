@@ -1,6 +1,15 @@
 import fs from "fs";
 import fetch from "node-fetch";
 
+/*
+ * Retry summary:
+ * - Retries HTTP 500/502/503/504 responses plus any call that is rate-limited (HTTP 429 or JSON error names containing "rateLimited").
+ * - Maximum of 4 attempts per request, using exponential backoff (BASE_DELAY_MS * 2^(attempt-1)) with a small jitter.
+ * - When rate-limited, it first honors Retry-After / X-RateLimit-* headers if present; otherwise it falls back to the exponential delay.
+ * - Logs whether the retry is due to a 5xx or a rate limit and shows the wait time and attempt count.
+ * - Non-rate-limit 4xx errors fail fast so we surface actual request issues quickly.
+ */
+
 const API_KEY = process.env.POSTMAN_API_KEY;
 const WORKSPACE_ID = process.env.POSTMAN_WORKSPACE_ID;
 const COLLECTION_FILE = process.env.POSTMAN_COLLECTION_FILE; // e.g. artifacts/collection.mock.json
@@ -15,7 +24,7 @@ if (!API_KEY || !WORKSPACE_ID || !COLLECTION_FILE || !COLLECTION_NAME) {
 
 const BASE = "https://api.getpostman.com";
 
-const RETRY_STATUSES = new Set([500, 502, 503, 504, 429]);
+const RETRY_STATUSES = new Set([500, 502, 503, 504]);
 const MAX_RETRIES = 4;
 const BASE_DELAY_MS = 1000;
 const MIN_INTERVAL_MS = 2000;
@@ -43,22 +52,45 @@ async function throttle() {
 function isRateLimited(status, responseBody) {
   if (status === 429) return true;
   const errName = responseBody?.error?.name || responseBody?.error?.code;
-  return errName ? errName.toLowerCase().includes("ratelimit") : false;
+  if (!errName) return false;
+  return errName.toLowerCase().includes("ratelimit");
+}
+
+function parseRetryAfterSeconds(value) {
+  if (!value) return null;
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) return numeric * 1000;
+  const asDate = Date.parse(value);
+  if (!Number.isNaN(asDate)) {
+    const diff = asDate - Date.now();
+    return diff > 0 ? diff : null;
+  }
+  return null;
 }
 
 function rateLimitDelay(headers) {
   if (!headers || typeof headers.get !== "function") return null;
+
+  const retryAfterKeys = ["retry-after", "x-ratelimit-retryafter"];
+  for (const key of retryAfterKeys) {
+    const val = headers.get(key);
+    const parsed = parseRetryAfterSeconds(val);
+    if (parsed) return parsed;
+  }
+
   const resetRaw = headers.get("x-ratelimit-reset");
-  if (!resetRaw) return null;
+  if (resetRaw) {
+    const resetEpoch = Number(resetRaw);
+    if (Number.isFinite(resetEpoch)) {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const deltaSec = resetEpoch - nowSec;
+      if (Number.isFinite(deltaSec) && deltaSec > 0) {
+        return deltaSec * 1000;
+      }
+    }
+  }
 
-  const resetEpoch = Number(resetRaw);
-  if (!Number.isFinite(resetEpoch)) return null;
-
-  const nowSec = Math.floor(Date.now() / 1000);
-  const deltaSec = resetEpoch - nowSec;
-  if (!Number.isFinite(deltaSec) || deltaSec <= 0) return null;
-
-  return deltaSec * 1000;
+  return null;
 }
 
 async function http(method, url, body, attempt = 1) {
@@ -78,27 +110,22 @@ async function http(method, url, body, attempt = 1) {
   }
 
   if (!res.ok) {
+    const rateLimited = isRateLimited(res.status, json);
     const shouldRetry =
-      (RETRY_STATUSES.has(res.status) || isRateLimited(res.status, json)) &&
-      attempt < MAX_RETRIES;
+      (RETRY_STATUSES.has(res.status) || rateLimited) && attempt < MAX_RETRIES;
 
     if (shouldRetry) {
-      const rateLimited = isRateLimited(res.status, json);
-      let delay = BASE_DELAY_MS * Math.pow(2, attempt - 1);
-
-      if (rateLimited) {
-        const resetDelay = rateLimitDelay(res.headers);
-        if (resetDelay) {
-          delay = Math.max(delay, resetDelay);
-        } else {
-          delay *= 2;
-        }
-      }
-
+      const baseDelay = BASE_DELAY_MS * Math.pow(2, attempt - 1);
+      const recommendedDelay = rateLimited ? rateLimitDelay(res.headers) : null;
+      let delay = rateLimited && recommendedDelay ? Math.max(baseDelay, recommendedDelay) : baseDelay;
+      const jittered = delay + Math.floor(Math.random() * 250);
+      const reason = rateLimited ? "Rate limit retry" : "5xx retry";
       console.warn(
-        `⚠️ ${method} ${url} failed with ${res.status}. Retrying in ${delay}ms (attempt ${attempt}/${MAX_RETRIES})`
+        `⚠️ ${reason}: ${method} ${url} -> ${res.status}. Waiting ${jittered}ms before attempt ${
+          attempt + 1
+        }/${MAX_RETRIES}`
       );
-      await sleep(delay + Math.floor(Math.random() * 250));
+      await sleep(jittered);
       return http(method, url, body, attempt + 1);
     }
 
@@ -126,8 +153,12 @@ async function createInWorkspace(payload) {
   return http("POST", `${BASE}/collections?workspace=${WORKSPACE_ID}`, payload);
 }
 
-async function deleteCollection(uid) {
-  return http("DELETE", `${BASE}/collections/${uid}`);
+async function fetchCollection(uid) {
+  return http("GET", `${BASE}/collections/${uid}`);
+}
+
+async function updateCollection(uid, payload) {
+  return http("PUT", `${BASE}/collections/${uid}`, payload);
 }
 
 function approxBytes(obj) {
@@ -148,8 +179,20 @@ async function main() {
 
   if (existingUid) {
     console.log("Found existing collection:", COLLECTION_NAME, "uid:", existingUid);
-    console.log("Deleting collection before recreate to avoid flaky updates…");
-    await deleteCollection(existingUid);
+    try {
+      const current = await fetchCollection(existingUid);
+      const info = current?.collection?.info || {};
+      if (payload?.collection?.info) {
+        payload.collection.info._postman_id = info._postman_id || info.id || existingUid;
+        payload.collection.info.id = info.id || info._postman_id || existingUid;
+      }
+    } catch (err) {
+      console.warn("⚠️ Failed to fetch existing collection details; continuing with provided payload.", err?.message || err);
+    }
+    console.log("Updating collection:", COLLECTION_NAME, "uid:", existingUid);
+    await updateCollection(existingUid, payload);
+    console.log("✅ Updated");
+    return;
   }
 
   console.log("Creating collection:", COLLECTION_NAME);

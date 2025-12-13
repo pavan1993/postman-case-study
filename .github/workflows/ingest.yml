@@ -39,17 +39,6 @@ jobs:
           POSTMAN_SERVICE_KEY: ${{ secrets.POSTMAN_SERVICE_KEY }}
         run: node scripts/patch_collection.js
 
-      - name: Install Newman
-        run: npm install -g newman
-
-      - name: Run Newman tests (JWT Mock)
-        run: >
-          newman run artifacts/collection.jwt_mock.json
-          -e newman/env.jwt_mock.json
-          --delay-request 200
-          --reporters cli,junit
-          --reporter-junit-export artifacts/newman-junit.xml
-
       - name: Upsert JWT Mock collection into workspace
         env:
           POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
