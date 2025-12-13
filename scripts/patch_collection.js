@@ -766,7 +766,6 @@ function buildJwtVariant() {
   reorderTopFolders(col, ["00 - Auth", "01 - Health", "02 - Refund Flow"]);
   ensureAuthGuards(col);
   ensureHealthGuards(col);
-  ensureMockRefundIdOverride(col);
   prioritizeSuccessResponses(col);
   applyMockResponseHeaders(col);
   ensureEdgeCaseFolder(col);
