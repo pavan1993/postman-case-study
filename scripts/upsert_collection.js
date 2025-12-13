@@ -119,8 +119,12 @@ async function createInWorkspace(payload) {
   return http("POST", `${BASE}/collections?workspace=${WORKSPACE_ID}`, payload);
 }
 
-async function deleteCollection(uid) {
-  return http("DELETE", `${BASE}/collections/${uid}`);
+async function fetchCollection(uid) {
+  return http("GET", `${BASE}/collections/${uid}`);
+}
+
+async function update(uid, payload) {
+  return http("PUT", `${BASE}/collections/${uid}`, payload);
 }
 
 function approxBytes(obj) {
@@ -143,13 +147,26 @@ async function main() {
 
   if (existingUid) {
     console.log("Found existing collection:", COLLECTION_NAME, "uid:", existingUid);
-    console.log("Deleting collection before recreate to avoid flaky updates…");
-    await deleteCollection(existingUid);
-  }
 
-  console.log("Creating collection:", COLLECTION_NAME);
-  const out = await createInWorkspace(payload);
-  console.log("✅ Created uid:", out?.collection?.uid);
+    try {
+      const current = await fetchCollection(existingUid);
+      const currentInfo = current?.collection?.info || {};
+      if (payload?.collection?.info) {
+        payload.collection.info._postman_id = currentInfo._postman_id || existingUid;
+        payload.collection.info.id = currentInfo.id || currentInfo._postman_id || existingUid;
+      }
+    } catch (err) {
+      console.warn("⚠️ Failed to fetch existing collection details; proceeding without merging ids.", err?.message || err);
+    }
+
+    console.log("Updating collection:", COLLECTION_NAME, "uid:", existingUid);
+    await update(existingUid, payload);
+    console.log("✅ Updated");
+  } else {
+    console.log("Creating collection:", COLLECTION_NAME);
+    const out = await createInWorkspace(payload);
+    console.log("✅ Created uid:", out?.collection?.uid);
+  }
 }
 
 main().catch((e) => {
