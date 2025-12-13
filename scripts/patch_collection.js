@@ -85,6 +85,13 @@ if (pm.response.code !== 200) {
 }
 `.trim();
 
+const MOCK_REFUND_ID = "rfnd_demo123";
+const MOCK_REFUND_ID_MARKER = "__MOCK_REFUND_ID_OVERRIDE__";
+const MOCK_REFUND_ID_SCRIPT = `
+// ${MOCK_REFUND_ID_MARKER}
+pm.environment.set("refundId", "${MOCK_REFUND_ID}");
+`.trim();
+
 const EDGE_CASE_MARKERS = {
   STATUS_404: "__EDGE_STATUS_404__",
   BAD_REQUEST_400: "__EDGE_BAD_REQUEST_400__",
@@ -753,6 +760,7 @@ function buildJwtVariant() {
   reorderTopFolders(col, ["00 - Auth", "01 - Health", "02 - Refund Flow"]);
   ensureAuthGuards(col);
   ensureHealthGuards(col);
+  ensureMockRefundIdOverride(col);
   prioritizeSuccessResponses(col);
   applyMockResponseHeaders(col);
   ensureEdgeCaseFolder(col);
@@ -808,4 +816,10 @@ function ensureHealthGuards(collection) {
   const healthItem = findRequestByName(collection.item, "GET Health");
   if (!healthItem) return;
   ensureRequestEvent(healthItem, "test", HEALTH_GUARD_SCRIPT, HEALTH_GUARD_MARKER);
+}
+
+function ensureMockRefundIdOverride(collection) {
+  const createItem = findRequestByName(collection.item, "POST Create Refund");
+  if (!createItem) return;
+  ensureRequestEvent(createItem, "test", MOCK_REFUND_ID_SCRIPT, MOCK_REFUND_ID_MARKER);
 }
