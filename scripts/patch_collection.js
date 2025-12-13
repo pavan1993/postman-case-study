@@ -563,7 +563,10 @@ function ensureRequestEvent(item, listen, scriptText, marker) {
   });
 }
 
-function applyRefundLinking(collection, { strictCreateTests } = { strictCreateTests: true }) {
+function applyRefundLinking(
+  collection,
+  { strictCreateTests, injectMockRefundOverride } = { strictCreateTests: true, injectMockRefundOverride: false }
+) {
   if (!collection?.item) return;
   const createScript = strictCreateTests ? REFUND_CREATE_TEST_STRICT : REFUND_CREATE_TEST_LENIENT;
 
@@ -596,6 +599,9 @@ function applyRefundLinking(collection, { strictCreateTests } = { strictCreateTe
 
     if (isCreateRefund) {
       ensureRequestEvent(entry, "test", createScript, REFUND_CREATE_MARKER);
+      if (injectMockRefundOverride) {
+        ensureRequestEvent(entry, "test", MOCK_REFUND_ID_SCRIPT, MOCK_REFUND_ID_MARKER);
+      }
     }
 
     if (containsRefundId) {
@@ -754,7 +760,7 @@ function buildJwtVariant() {
   enforceJwtAuth(col);
   ensureJwtEvents(col);
   addAuthFolder(col);
-  applyRefundLinking(col, { strictCreateTests: false });
+  applyRefundLinking(col, { strictCreateTests: false, injectMockRefundOverride: true });
   ensureHealthFolder(col);
   ensureRefundFlowFolder(col);
   reorderTopFolders(col, ["00 - Auth", "01 - Health", "02 - Refund Flow"]);
@@ -774,7 +780,7 @@ function buildOauthVariant() {
   const col = doc.collection;
   removeConflictingCollectionVars(col);
   addOauthSetupFolder(col);
-  applyRefundLinking(col, { strictCreateTests: true });
+  applyRefundLinking(col, { strictCreateTests: true, injectMockRefundOverride: false });
   ensureHealthFolder(col);
   ensureRefundFlowFolder(col);
   reorderTopFolders(col, ["00 - OAuth2 Setup", "01 - Health", "02 - Refund Flow"]);
@@ -816,10 +822,4 @@ function ensureHealthGuards(collection) {
   const healthItem = findRequestByName(collection.item, "GET Health");
   if (!healthItem) return;
   ensureRequestEvent(healthItem, "test", HEALTH_GUARD_SCRIPT, HEALTH_GUARD_MARKER);
-}
-
-function ensureMockRefundIdOverride(collection) {
-  const createItem = findRequestByName(collection.item, "POST Create Refund");
-  if (!createItem) return;
-  ensureRequestEvent(createItem, "test", MOCK_REFUND_ID_SCRIPT, MOCK_REFUND_ID_MARKER);
 }
