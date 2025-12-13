@@ -43,7 +43,32 @@ jobs:
           POSTMAN_SERVICE_KEY: ${{ secrets.POSTMAN_SERVICE_KEY }}
         run: node scripts/patch_collection.js
 
+      - name: Install Newman
+        run: npm install newman
+
+      - name: Start mock server
+        run: |
+          node scripts/mock_server.js &
+          echo $! > /tmp/mock_pid
+          sleep 1
+
+      - name: Run Newman tests
+        run: |
+          npx newman run artifacts/collection.jwt_mock.json \
+            --environment newman/env.ci.local.json \
+            --delay-request 50 \
+            --reporters cli,junit \
+            --reporter-junit-export artifacts/newman-junit.xml
+
+      - name: Stop mock server
+        if: always()
+        run: |
+          if [ -f /tmp/mock_pid ]; then
+            kill "$(cat /tmp/mock_pid)"
+          fi
+
       - name: Upsert JWT Mock collection into workspace
+        if: github.event_name == 'workflow_dispatch'
         env:
           POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
           POSTMAN_WORKSPACE_ID: ${{ secrets.POSTMAN_WORKSPACE_ID }}
@@ -53,9 +78,11 @@ jobs:
         run: node scripts/upsert_collection.js
 
       - name: Small delay to avoid Postman burst limits
+        if: github.event_name == 'workflow_dispatch'
         run: sleep 3
 
       - name: Upsert OAuth2 Ready collection into workspace
+        if: github.event_name == 'workflow_dispatch'
         env:
           POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
           POSTMAN_WORKSPACE_ID: ${{ secrets.POSTMAN_WORKSPACE_ID }}
@@ -65,6 +92,7 @@ jobs:
         run: node scripts/upsert_collection.js
 
       - name: Upsert environments (Dev/QA/UAT/Prod) into Postman (no duplicates)
+        if: github.event_name == 'workflow_dispatch'
         env:
           POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
           POSTMAN_WORKSPACE_ID: ${{ secrets.POSTMAN_WORKSPACE_ID }}
@@ -72,6 +100,7 @@ jobs:
         run: node scripts/upsert_envs.js
 
       - name: Delete auto-generated collection (cleanup)
+        if: github.event_name == 'workflow_dispatch'
         env:
           POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
           POSTMAN_WORKSPACE_ID: ${{ secrets.POSTMAN_WORKSPACE_ID }}
