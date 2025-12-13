@@ -1,51 +1,97 @@
 import http from 'node:http';
 
 const MOCK_PORT = Number(process.env.MOCK_PORT) || 4010;
-const ROUTES = {
-  'POST /auth/token': (res) => {
-    sendJson(res, 200, {
-      access_token: 'demo.jwt.token',
-      token_type: 'Bearer',
-      expires_in: 300,
-    });
+const ROUTES = [
+  {
+    method: 'POST',
+    match: (pathname) => pathname === '/auth/token',
+    handler: (res) => {
+      sendJson(res, 200, {
+        access_token: 'demo.jwt.token',
+        token_type: 'Bearer',
+        expires_in: 300,
+      });
+    },
   },
-  'GET /health': (res) => {
-    sendJson(res, 200, { status: 'ok' });
+  {
+    method: 'GET',
+    match: (pathname) => pathname === '/health',
+    handler: (res) => {
+      sendJson(res, 200, { status: 'ok' });
+    },
   },
-  'POST /refunds': (res) => {
-    sendJson(res, 201, refundResponse());
+  {
+    method: 'POST',
+    match: (pathname) => pathname === '/refunds',
+    handler: (res) => {
+      sendJson(res, 201, refundResponse());
+    },
   },
-  'GET /refunds/rfnd_demo123': (res) => {
-    sendJson(res, 200, refundResponse());
+  {
+    method: 'GET',
+    match: (pathname) => pathname === '/refunds',
+    handler: (res) => {
+      sendJson(res, 200, { refunds: [refundResponse()] });
+    },
   },
-  'GET /refunds/rfnd_demo123/status': (res) => {
-    sendJson(res, 200, {
-      refundId: 'rfnd_demo123',
-      status: 'PENDING',
-    });
+  {
+    method: 'GET',
+    match: (pathname) => refundPath(pathname)?.type === 'details',
+    handler: (res, match) => {
+      sendJson(res, 200, refundResponse(match.refundId));
+    },
   },
-  'POST /refunds/rfnd_demo123/cancel': (res) => {
-    sendJson(res, 200, {
-      refundId: 'rfnd_demo123',
-      status: 'CANCELLED',
-    });
+  {
+    method: 'GET',
+    match: (pathname) => refundPath(pathname)?.type === 'status',
+    handler: (res, match) => {
+      sendJson(res, 200, {
+        refundId: match.refundId,
+        status: 'PENDING',
+      });
+    },
   },
-  'GET /refunds': (res) => {
-    sendJson(res, 200, { refunds: [refundResponse()] });
+  {
+    method: 'POST',
+    match: (pathname) => refundPath(pathname)?.type === 'cancel',
+    handler: (res, match) => {
+      sendJson(res, 200, {
+        refundId: match.refundId,
+        status: 'CANCELLED',
+      });
+    },
   },
-};
+];
 
-function refundResponse() {
+function refundPath(pathname) {
+  const base = '/refunds/';
+  if (!pathname.startsWith(base)) return null;
+  const parts = pathname.slice(base.length).split('/');
+  const refundId = parts[0];
+  if (!refundId) return null;
+  if (parts.length === 1) {
+    return { type: 'details', refundId };
+  }
+  if (parts[1] === 'status') {
+    return { type: 'status', refundId };
+  }
+  if (parts[1] === 'cancel' && parts.length === 2) {
+    return { type: 'cancel', refundId };
+  }
+  return null;
+}
+
+function refundResponse(refundId = 'rfnd_demo123') {
   return {
-    refundId: 'rfnd_demo123',
+    refundId,
     transactionId: 'txn_demo123',
     status: 'PENDING',
     refundAmount: 10.5,
     refundCurrency: 'USD',
     links: {
-      self: '/refunds/rfnd_demo123',
-      status: '/refunds/rfnd_demo123/status',
-      cancel: '/refunds/rfnd_demo123/cancel',
+      self: `/refunds/${refundId}`,
+      status: `/refunds/${refundId}/status`,
+      cancel: `/refunds/${refundId}/cancel`,
     },
   };
 }
@@ -60,11 +106,14 @@ function sendJson(res, statusCode, payload) {
 }
 
 const server = http.createServer((req, res) => {
-  const key = `${req.method} ${req.url}`;
-  const handler = ROUTES[key];
+  const url = new URL(req.url, 'http://localhost');
+  const route = ROUTES.find(
+    (entry) => entry.method === req.method && entry.match(url.pathname)
+  );
 
-  if (handler) {
-    handler(res);
+  if (route) {
+    const matchData = route.match(url.pathname);
+    route.handler(res, matchData);
     return;
   }
 
