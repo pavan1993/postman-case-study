@@ -88,23 +88,7 @@ jobs:
           RUN_NUMBER="${{ github.run_number }}"
           JOB_STATUS="${{ job.status }}"
           if [ -f "$JUNIT_PATH" ]; then
-            read_tests_failures=$(JUNIT_PATH="$JUNIT_PATH" node <<'JS'
-              const fs = require('fs');
-              const path = process.env.JUNIT_PATH;
-              const xml = fs.readFileSync(path, 'utf8');
-              const result = { tests: 0, failures: 0 };
-              const suitesMatch = xml.match(/<testsuites[^>]*\stests="(\d+)"[^>]*>/i);
-              if (suitesMatch) result.tests = Number(suitesMatch[1]) || 0;
-              const suitesFailureMatch = xml.match(/<testsuites[^>]*\sfailures="(\d+)"[^>]*>/i);
-              if (suitesFailureMatch) {
-                result.failures = Number(suitesFailureMatch[1]) || 0;
-              } else {
-                const matches = [...xml.matchAll(/<testsuite[^>]*\sfailures="(\d+)"[^>]*>/gi)];
-                result.failures = matches.reduce((sum, m) => sum + (Number(m[1]) || 0), 0);
-              }
-              console.log(JSON.stringify(result));
-            JS
-            )
+            read_tests_failures=$(JUNIT_PATH="$JUNIT_PATH" node -e "const fs=require('fs');const path=process.env.JUNIT_PATH;const xml=fs.readFileSync(path,'utf8');const result={tests:0,failures:0};const suitesMatch=xml.match(/<testsuites[^>]*\\stests=\\\"(\\d+)\\\"[^>]*>/i);if(suitesMatch)result.tests=Number(suitesMatch[1])||0;const suitesFailureMatch=xml.match(/<testsuites[^>]*\\sfailures=\\\"(\\d+)\\\"[^>]*>/i);if(suitesFailureMatch){result.failures=Number(suitesFailureMatch[1])||0;}else{const matches=[...xml.matchAll(/<testsuite[^>]*\\sfailures=\\\"(\\d+)\\\"[^>]*>/gi)];result.failures=matches.reduce((sum,m)=>sum+(Number(m[1])||0),0);}console.log(JSON.stringify(result));")
             TESTS=$(echo "$read_tests_failures" | node -p "JSON.parse(fs.readFileSync(0,'utf8')).tests")
             FAILURES=$(echo "$read_tests_failures" | node -p "JSON.parse(fs.readFileSync(0,'utf8')).failures")
           fi
@@ -117,25 +101,7 @@ jobs:
           TESTS="$TESTS" \
           FAILURES="$FAILURES" \
           DURATION="$DURATION" \
-          node <<'NODE'
-            const fs = require('fs');
-            const exists = fs.existsSync(process.env.JUNIT_PATH) ? 'yes' : 'no';
-            const lines = [
-              '### Run Summary',
-              '',
-              `- Workflow: ${process.env.WORKFLOW}`,
-              `- Git SHA: ${process.env.GIT_SHA}`,
-              `- Ref: ${process.env.REF}`,
-              `- Run number: ${process.env.RUN_NUMBER}`,
-              `- Status: ${process.env.JOB_STATUS}`,
-              `- Newman JUnit: ${process.env.JUNIT_PATH} (exists: ${exists})`,
-              `- Tests: ${process.env.TESTS}`,
-              `- Failures: ${process.env.FAILURES}`,
-              `- Duration (s): ${process.env.DURATION}`,
-              ''
-            ];
-            fs.writeFileSync('artifacts/summary.md', lines.join('\n'));
-          NODE
+          node -e "const fs=require('fs');const exists=fs.existsSync(process.env.JUNIT_PATH)?'yes':'no';const lines=['### Run Summary','',`- Workflow: ${process.env.WORKFLOW}`,`- Git SHA: ${process.env.GIT_SHA}`,`- Ref: ${process.env.REF}`,`- Run number: ${process.env.RUN_NUMBER}`,`- Status: ${process.env.JOB_STATUS}`,`- Newman JUnit: ${process.env.JUNIT_PATH} (exists: ${exists})`,`- Tests: ${process.env.TESTS}`,`- Failures: ${process.env.FAILURES}`,`- Duration (s): ${process.env.DURATION}`,''];fs.writeFileSync('artifacts/summary.md', lines.join('\\n'))"
 
       - name: Upsert JWT Mock collection into workspace
         env:
