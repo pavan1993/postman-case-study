@@ -361,22 +361,22 @@ function ensureRefundFlowFolder(collection) {
     {
       name: "POST Create Refund",
       method: "POST",
-      pattern: /\\/refunds(?!\\/\\{\\{refundId\\}\\})/i,
+      pattern: /\/refunds(?!\/\{\{refundId\}\})/i,
     },
     {
       name: "GET Refund Details",
       method: "GET",
-      pattern: /\\/refunds\\/\\{\\{refundId\\}\\}(?:$|[?#])/i,
+      pattern: /\/refunds\/\{\{refundId\}\}(?:$|[?#])/i,
     },
     {
       name: "GET Refund Status",
       method: "GET",
-      pattern: /\\/refunds\\/\\{\\{refundId\\}\\}\\/status/i,
+      pattern: /\/refunds\/\{\{refundId\}\}\/status/i,
     },
     {
       name: "POST Cancel Refund",
       method: "POST",
-      pattern: /\\/refunds\\/\\{\\{refundId\\}\\}\\/cancel/i,
+      pattern: /\/refunds\/\{\{refundId\}\}\/cancel/i,
       optional: true,
     },
   ];
