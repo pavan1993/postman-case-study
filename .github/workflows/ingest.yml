@@ -68,7 +68,6 @@ jobs:
           fi
 
       - name: Upsert JWT Mock collection into workspace
-        if: github.event_name == 'workflow_dispatch'
         env:
           POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
           POSTMAN_WORKSPACE_ID: ${{ secrets.POSTMAN_WORKSPACE_ID }}
@@ -78,11 +77,9 @@ jobs:
         run: node scripts/upsert_collection.js
 
       - name: Small delay to avoid Postman burst limits
-        if: github.event_name == 'workflow_dispatch'
         run: sleep 3
 
       - name: Upsert OAuth2 Ready collection into workspace
-        if: github.event_name == 'workflow_dispatch'
         env:
           POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
           POSTMAN_WORKSPACE_ID: ${{ secrets.POSTMAN_WORKSPACE_ID }}
@@ -92,7 +89,6 @@ jobs:
         run: node scripts/upsert_collection.js
 
       - name: Upsert environments (Dev/QA/UAT/Prod) into Postman (no duplicates)
-        if: github.event_name == 'workflow_dispatch'
         env:
           POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
           POSTMAN_WORKSPACE_ID: ${{ secrets.POSTMAN_WORKSPACE_ID }}
@@ -100,7 +96,6 @@ jobs:
         run: node scripts/upsert_envs.js
 
       - name: Delete auto-generated collection (cleanup)
-        if: github.event_name == 'workflow_dispatch'
         env:
           POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
           POSTMAN_WORKSPACE_ID: ${{ secrets.POSTMAN_WORKSPACE_ID }}
