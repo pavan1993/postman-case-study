@@ -92,16 +92,21 @@ jobs:
             TESTS=$(echo "$read_tests_failures" | node -p "JSON.parse(fs.readFileSync(0,'utf8')).tests")
             FAILURES=$(echo "$read_tests_failures" | node -p "JSON.parse(fs.readFileSync(0,'utf8')).failures")
           fi
-          WORKFLOW="$WORKFLOW" \
-          GIT_SHA="$GIT_SHA" \
-          REF="$REF" \
-          RUN_NUMBER="$RUN_NUMBER" \
-          JOB_STATUS="$JOB_STATUS" \
-          JUNIT_PATH="$JUNIT_PATH" \
-          TESTS="$TESTS" \
-          FAILURES="$FAILURES" \
-          DURATION="$DURATION" \
-          node -e "const fs=require('fs');const exists=fs.existsSync(process.env.JUNIT_PATH)?'yes':'no';const lines=['### Run Summary','',`- Workflow: ${process.env.WORKFLOW}`,`- Git SHA: ${process.env.GIT_SHA}`,`- Ref: ${process.env.REF}`,`- Run number: ${process.env.RUN_NUMBER}`,`- Status: ${process.env.JOB_STATUS}`,`- Newman JUnit: ${process.env.JUNIT_PATH} (exists: ${exists})`,`- Tests: ${process.env.TESTS}`,`- Failures: ${process.env.FAILURES}`,`- Duration (s): ${process.env.DURATION}`,''];fs.writeFileSync('artifacts/summary.md', lines.join('\\n'))"
+          JUNIT_EXISTS=$( [ -f "$JUNIT_PATH" ] && echo "yes" || echo "no" )
+          {
+            echo "### Run Summary"
+            echo
+            echo "- Workflow: ${WORKFLOW}"
+            echo "- Git SHA: ${GIT_SHA}"
+            echo "- Ref: ${REF}"
+            echo "- Run number: ${RUN_NUMBER}"
+            echo "- Status: ${JOB_STATUS}"
+            echo "- Newman JUnit: ${JUNIT_PATH} (exists: ${JUNIT_EXISTS})"
+            echo "- Tests: ${TESTS}"
+            echo "- Failures: ${FAILURES}"
+            echo "- Duration (s): ${DURATION}"
+            echo
+          } > artifacts/summary.md
 
       - name: Upsert JWT Mock collection into workspace
         env:
