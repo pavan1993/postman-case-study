@@ -1,4 +1,4 @@
-const http = require('http');
+import http from 'node:http';
 
 const MOCK_PORT = Number(process.env.MOCK_PORT) || 4010;
 const ROUTES = {
