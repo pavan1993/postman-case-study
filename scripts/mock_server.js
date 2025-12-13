@@ -57,19 +57,9 @@ const ROUTES = [
   },
   {
     method: 'GET',
-    match: (pathname) =>
-      pathname === `/refunds/${HAPPY_PATH_REFUND_ID}/status`
-        ? { refundId: HAPPY_PATH_REFUND_ID }
-        : null,
-    handler: (_req, res, match) => {
-      sendRefundStatus(res, match.refundId);
-    },
-  },
-  {
-    method: 'GET',
     match: (pathname) => refundPath(pathname, 'status'),
     handler: (req, res, match) => {
-      if (!isHappyPathRefund(match)) {
+      if (headerEquals(req, 'x-demo-force-404', '1')) {
         return sendRefundNotFound(res);
       }
       sendRefundStatus(res, match.refundId);

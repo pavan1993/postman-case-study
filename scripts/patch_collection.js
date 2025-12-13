@@ -753,7 +753,7 @@ function ensureEdgeCaseFolder(collection) {
       name: "GET Status - Unknown refundId (404)",
       method: "GET",
       url: "{{base_url}}/refunds/rfnd_does_not_exist/status",
-      headers: [],
+      headers: [{ key: "x-demo-force-404", value: "1" }],
       marker: EDGE_CASE_MARKERS.STATUS_404,
       expected: 404,
       testName: "Edge status 404",
