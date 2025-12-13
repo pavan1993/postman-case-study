@@ -32,6 +32,7 @@ const BASE_DELAY_MS = 1000;
 const RATE_LIMIT_MIN_DELAY_MS = 30000;
 const MIN_INTERVAL_MS = 2000;
 let lastApiCall = 0;
+let payloadMetrics = null;
 
 function headers() {
   return {
@@ -173,6 +174,7 @@ async function findUidByName(name) {
 }
 
 async function createInWorkspace(payload) {
+  logPayloadSize("POST");
   return http("POST", `${BASE}/collections?workspace=${WORKSPACE_ID}`, payload);
 }
 
@@ -181,11 +183,29 @@ async function fetchCollection(uid) {
 }
 
 async function updateCollection(uid, payload) {
+  logPayloadSize("PUT");
   return http("PUT", `${BASE}/collections/${uid}`, payload);
 }
 
 function approxBytes(obj) {
   return Buffer.byteLength(JSON.stringify(obj), "utf8");
+}
+
+function computePayloadMetrics(raw) {
+  const bytes = Buffer.byteLength(raw, "utf8");
+  const kb = bytes / 1024;
+  const mb = kb / 1024;
+  return { bytes, kb, mb };
+}
+
+function logPayloadSize(method) {
+  if (!payloadMetrics) return;
+  const { bytes, kb, mb } = payloadMetrics;
+  console.log(
+    `Upserting collection '${COLLECTION_NAME}' via ${method} | Payload size: ${Math.round(kb)} KB (${(
+      mb
+    ).toFixed(2)} MB, ${bytes} bytes)`
+  );
 }
 
 function hashPayload(str) {
@@ -216,6 +236,7 @@ function writeLastHash(filePath, hash) {
 
 async function main() {
   const rawPayload = fs.readFileSync(COLLECTION_FILE, "utf8");
+  payloadMetrics = computePayloadMetrics(rawPayload);
   const payload = JSON.parse(rawPayload);
   const payloadHash = hashPayload(rawPayload);
   const hashFile = hashFilePath(COLLECTION_NAME);
