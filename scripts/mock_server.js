@@ -57,15 +57,22 @@ const ROUTES = [
   },
   {
     method: 'GET',
+    match: (pathname) =>
+      pathname === `/refunds/${HAPPY_PATH_REFUND_ID}/status`
+        ? { refundId: HAPPY_PATH_REFUND_ID }
+        : null,
+    handler: (_req, res, match) => {
+      sendRefundStatus(res, match.refundId);
+    },
+  },
+  {
+    method: 'GET',
     match: (pathname) => refundPath(pathname, 'status'),
     handler: (req, res, match) => {
       if (!isHappyPathRefund(match)) {
         return sendRefundNotFound(res);
       }
-      sendJson(res, 200, {
-        refundId: match.refundId,
-        status: 'PENDING',
-      });
+      sendRefundStatus(res, match.refundId);
     },
   },
   {
@@ -141,6 +148,13 @@ function sendRefundNotFound(res) {
 
 function isHappyPathRefund(match) {
   return match?.refundId === HAPPY_PATH_REFUND_ID;
+}
+
+function sendRefundStatus(res, refundId) {
+  sendJson(res, 200, {
+    refundId,
+    status: 'PENDING',
+  });
 }
 
 const server = http.createServer((req, res) => {

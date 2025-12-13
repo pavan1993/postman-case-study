@@ -233,12 +233,29 @@ if (currency) {
 const REFUND_STATUS_MARKER = "__REFUND_STATUS_CONTRACT__";
 const REFUND_STATUS_TEST = `
 // ${REFUND_STATUS_MARKER}
-let statusData = {};
-try { statusData = pm.response.json(); } catch (err) { statusData = {}; }
-const latestStatus = statusData.status || statusData.refundStatus || statusData.refund_status;
-if (latestStatus) pm.environment.set("refund_status", latestStatus);
+const statusCode = pm.response.code;
+const rawBody = pm.response.text();
+pm.test("refund status HTTP 200", function () {
+  pm.expect(statusCode, \`Expected 200, got \${statusCode}: \${rawBody}\`).to.eql(200);
+});
+let statusJson;
+pm.test("refund status JSON body", function () {
+  try {
+    statusJson = pm.response.json();
+    pm.expect(statusJson, "Parsed JSON is falsy").to.be.an("object");
+  } catch (err) {
+    pm.expect.fail(\`Non-JSON response: \${rawBody}\`);
+  }
+});
+const resolvedStatus =
+  (statusJson && (statusJson.status || statusJson.refundStatus || statusJson.refund_status)) ||
+  (statusJson?.data && (statusJson.data.status || statusJson.data.refundStatus || statusJson.data.refund_status)) ||
+  (statusJson?.refund && (statusJson.refund.status || statusJson.refund.refundStatus || statusJson.refund.refund_status));
+if (resolvedStatus) {
+  pm.environment.set("refund_status", resolvedStatus);
+}
 pm.test("refund status present", function () {
-  pm.expect(latestStatus, "status missing in response").to.exist;
+  pm.expect(resolvedStatus, \`status missing; response=\${JSON.stringify(statusJson)}\`).to.exist;
 });
 `.trim();
 
@@ -398,22 +415,26 @@ function ensureRefundFlowFolder(collection) {
       name: "POST Create Refund",
       method: "POST",
       pattern: /\/refunds(?!\/\{\{refundId\}\})/i,
+      url: "{{base_url}}/refunds",
     },
     {
       name: "GET Refund Details",
       method: "GET",
       pattern: /\/refunds\/\{\{refundId\}\}(?:$|[?#])/i,
+      url: "{{base_url}}/refunds/{{refundId}}",
     },
     {
       name: "GET Refund Status",
       method: "GET",
       pattern: /\/refunds\/\{\{refundId\}\}\/status/i,
+      url: "{{base_url}}/refunds/{{refundId}}/status",
     },
     {
       name: "POST Cancel Refund",
       method: "POST",
       pattern: /\/refunds\/\{\{refundId\}\}\/cancel/i,
       optional: true,
+      url: "{{base_url}}/refunds/{{refundId}}/cancel",
     },
   ];
   const ordered = [];
@@ -427,6 +448,9 @@ function ensureRefundFlowFolder(collection) {
       if (spec.optional) continue;
     } else {
       requestItem.name = spec.name;
+      if (spec.url) {
+        setUrlString(requestItem.request, spec.url);
+      }
       ordered.push(requestItem);
       continue;
     }
