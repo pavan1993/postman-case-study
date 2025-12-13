@@ -48,7 +48,7 @@ jobs:
 
       - name: Start mock server
         run: |
-          node scripts/mock_server.js &
+          nohup node scripts/mock_server.js > /tmp/mock_server.log 2>&1 &
           echo $! > /tmp/mock_pid
           sleep 1
 
@@ -64,7 +64,7 @@ jobs:
         if: always()
         run: |
           if [ -f /tmp/mock_pid ]; then
-            kill "$(cat /tmp/mock_pid)"
+            kill "$(cat /tmp/mock_pid)" || true
           fi
 
       - name: Upsert JWT Mock collection into workspace
