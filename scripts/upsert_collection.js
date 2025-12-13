@@ -187,6 +187,10 @@ async function updateCollection(uid, payload) {
   return http("PUT", `${BASE}/collections/${uid}`, payload);
 }
 
+async function deleteCollection(uid) {
+  return http("DELETE", `${BASE}/collections/${uid}`);
+}
+
 function approxBytes(obj) {
   return Buffer.byteLength(JSON.stringify(obj), "utf8");
 }
@@ -272,10 +276,24 @@ async function main() {
       );
     }
     console.log("Updating collection:", COLLECTION_NAME, "uid:", existingUid);
-    await updateCollection(existingUid, payload);
-    console.log("✅ Updated");
-    writeLastHash(hashFile, payloadHash);
-    return;
+    try {
+      await updateCollection(existingUid, payload);
+      console.log("✅ Updated");
+      writeLastHash(hashFile, payloadHash);
+      return;
+    } catch (err) {
+      console.warn("⚠️ PUT update failed; attempting delete + recreate fallback.", err?.message || err);
+      try {
+        await deleteCollection(existingUid);
+        const out = await createInWorkspace(payload);
+        console.log("✅ Recreated uid:", out?.collection?.uid);
+        writeLastHash(hashFile, payloadHash);
+        return;
+      } catch (fallbackErr) {
+        console.error("❌ Fallback delete + recreate failed.", fallbackErr);
+        throw fallbackErr;
+      }
+    }
   }
 
   console.log("Creating collection:", COLLECTION_NAME);
