@@ -10,6 +10,10 @@ on:
       - "scripts/**"
       - ".github/workflows/ingest.yml"
 
+concurrency:
+  group: postman-ingest-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ingest:
     runs-on: ubuntu-latest
