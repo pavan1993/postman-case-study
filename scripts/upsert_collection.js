@@ -1,13 +1,14 @@
 import fs from "fs";
+import crypto from "crypto";
 import fetch from "node-fetch";
 
 /*
  * Retry summary:
- * - Retries HTTP 500/502/503/504 responses plus any call that is rate-limited (HTTP 429 or JSON error names containing "rateLimited").
- * - Maximum of 4 attempts per request, using exponential backoff (BASE_DELAY_MS * 2^(attempt-1)) with a small jitter.
- * - When rate-limited, it first honors Retry-After / X-RateLimit-* headers if present; otherwise it falls back to the exponential delay.
- * - Logs whether the retry is due to a 5xx or a rate limit and shows the wait time and attempt count.
- * - Non-rate-limit 4xx errors fail fast so we surface actual request issues quickly.
+ * - Retries HTTP 500/502/503/504 responses with exponential backoff (BASE_DELAY_MS * 2^n) plus a small jitter, up to 4 attempts.
+ * - Retries rate-limit responses (HTTP 429 or JSON bodies whose error name/code contains "ratelimit") up to 3 attempts.
+ * - Rate-limit retries honor Retry-After / X-RateLimit-* headers when present; otherwise they wait at least 30 seconds before retrying.
+ * - Logs clearly distinguish between 5xx retries and rate-limit retries, showing wait time and attempt counts.
+ * - Non-rate-limit 4xx errors fail immediately so request issues surface quickly.
  */
 
 const API_KEY = process.env.POSTMAN_API_KEY;
@@ -25,8 +26,10 @@ if (!API_KEY || !WORKSPACE_ID || !COLLECTION_FILE || !COLLECTION_NAME) {
 const BASE = "https://api.getpostman.com";
 
 const RETRY_STATUSES = new Set([500, 502, 503, 504]);
-const MAX_RETRIES = 4;
+const MAX_5XX_RETRIES = 4;
+const MAX_RATELIMIT_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
+const RATE_LIMIT_MIN_DELAY_MS = 30000;
 const MIN_INTERVAL_MS = 2000;
 let lastApiCall = 0;
 
@@ -56,7 +59,7 @@ function isRateLimited(status, responseBody) {
   return errName.toLowerCase().includes("ratelimit");
 }
 
-function parseRetryAfterSeconds(value) {
+function parseRetryAfter(value) {
   if (!value) return null;
   const numeric = Number(value);
   if (Number.isFinite(numeric)) return numeric * 1000;
@@ -73,8 +76,7 @@ function rateLimitDelay(headers) {
 
   const retryAfterKeys = ["retry-after", "x-ratelimit-retryafter"];
   for (const key of retryAfterKeys) {
-    const val = headers.get(key);
-    const parsed = parseRetryAfterSeconds(val);
+    const parsed = parseRetryAfter(headers.get(key));
     if (parsed) return parsed;
   }
 
@@ -93,7 +95,7 @@ function rateLimitDelay(headers) {
   return null;
 }
 
-async function http(method, url, body, attempt = 1) {
+async function http(method, url, body, counters = { fivexx: 0, rate: 0 }) {
   await throttle();
   const res = await fetch(url, {
     method,
@@ -111,22 +113,43 @@ async function http(method, url, body, attempt = 1) {
 
   if (!res.ok) {
     const rateLimited = isRateLimited(res.status, json);
-    const shouldRetry =
-      (RETRY_STATUSES.has(res.status) || rateLimited) && attempt < MAX_RETRIES;
 
-    if (shouldRetry) {
-      const baseDelay = BASE_DELAY_MS * Math.pow(2, attempt - 1);
-      const recommendedDelay = rateLimited ? rateLimitDelay(res.headers) : null;
-      let delay = rateLimited && recommendedDelay ? Math.max(baseDelay, recommendedDelay) : baseDelay;
+    if (rateLimited) {
+      if (counters.rate >= MAX_RATELIMIT_RETRIES) {
+        const err = new Error(`${method} ${url} failed: ${res.status}\n${text}`);
+        err.status = res.status;
+        err.response = json;
+        throw err;
+      }
+      const headerDelay = rateLimitDelay(res.headers);
+      const delay = Math.max(headerDelay ?? RATE_LIMIT_MIN_DELAY_MS, RATE_LIMIT_MIN_DELAY_MS);
       const jittered = delay + Math.floor(Math.random() * 250);
-      const reason = rateLimited ? "Rate limit retry" : "5xx retry";
       console.warn(
-        `⚠️ ${reason}: ${method} ${url} -> ${res.status}. Waiting ${jittered}ms before attempt ${
-          attempt + 1
-        }/${MAX_RETRIES}`
+        `⚠️ Rate limit retry: ${method} ${url} -> ${res.status}. Waiting ${jittered}ms before attempt ${
+          counters.rate + 1
+        }/${MAX_RATELIMIT_RETRIES}`
       );
       await sleep(jittered);
-      return http(method, url, body, attempt + 1);
+      return http(method, url, body, { fivexx: counters.fivexx, rate: counters.rate + 1 });
+    }
+
+    const is5xx = RETRY_STATUSES.has(res.status);
+    if (is5xx) {
+      if (counters.fivexx >= MAX_5XX_RETRIES) {
+        const err = new Error(`${method} ${url} failed: ${res.status}\n${text}`);
+        err.status = res.status;
+        err.response = json;
+        throw err;
+      }
+      const baseDelay = BASE_DELAY_MS * Math.pow(2, counters.fivexx);
+      const jittered = baseDelay + Math.floor(Math.random() * 250);
+      console.warn(
+        `⚠️ 5xx retry: ${method} ${url} -> ${res.status}. Waiting ${jittered}ms before attempt ${
+          counters.fivexx + 1
+        }/${MAX_5XX_RETRIES}`
+      );
+      await sleep(jittered);
+      return http(method, url, body, { fivexx: counters.fivexx + 1, rate: counters.rate });
     }
 
     const err = new Error(`${method} ${url} failed: ${res.status}\n${text}`);
@@ -165,8 +188,38 @@ function approxBytes(obj) {
   return Buffer.byteLength(JSON.stringify(obj), "utf8");
 }
 
+function hashPayload(str) {
+  return crypto.createHash("sha256").update(str).digest("hex");
+}
+
+function sanitizeName(name) {
+  return (name || "collection").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+}
+
+function hashFilePath(name) {
+  const safe = sanitizeName(name);
+  return `artifacts/last_hash.${safe}.txt`;
+}
+
+function readLastHash(filePath) {
+  try {
+    return fs.readFileSync(filePath, "utf8").trim();
+  } catch {
+    return null;
+  }
+}
+
+function writeLastHash(filePath, hash) {
+  fs.mkdirSync("artifacts", { recursive: true });
+  fs.writeFileSync(filePath, hash);
+}
+
 async function main() {
-  const payload = JSON.parse(fs.readFileSync(COLLECTION_FILE, "utf8"));
+  const rawPayload = fs.readFileSync(COLLECTION_FILE, "utf8");
+  const payload = JSON.parse(rawPayload);
+  const payloadHash = hashPayload(rawPayload);
+  const hashFile = hashFilePath(COLLECTION_NAME);
+  const lastHash = readLastHash(hashFile);
 
   if (payload?.collection?.info?.name) {
     payload.collection.info.name = COLLECTION_NAME;
@@ -178,6 +231,11 @@ async function main() {
   const existingUid = await findUidByName(COLLECTION_NAME);
 
   if (existingUid) {
+    if (lastHash && lastHash === payloadHash) {
+      console.log(`No changes detected for ${COLLECTION_NAME}; skipping update.`);
+      return;
+    }
+
     console.log("Found existing collection:", COLLECTION_NAME, "uid:", existingUid);
     try {
       const current = await fetchCollection(existingUid);
@@ -187,17 +245,22 @@ async function main() {
         payload.collection.info.id = info.id || info._postman_id || existingUid;
       }
     } catch (err) {
-      console.warn("⚠️ Failed to fetch existing collection details; continuing with provided payload.", err?.message || err);
+      console.warn(
+        "⚠️ Failed to fetch existing collection details; continuing with provided payload.",
+        err?.message || err
+      );
     }
     console.log("Updating collection:", COLLECTION_NAME, "uid:", existingUid);
     await updateCollection(existingUid, payload);
     console.log("✅ Updated");
+    writeLastHash(hashFile, payloadHash);
     return;
   }
 
   console.log("Creating collection:", COLLECTION_NAME);
   const out = await createInWorkspace(payload);
   console.log("✅ Created uid:", out?.collection?.uid);
+  writeLastHash(hashFile, payloadHash);
 }
 
 main().catch((e) => {

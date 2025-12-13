@@ -47,6 +47,9 @@ jobs:
           POSTMAN_COLLECTION_NAME: ${{ format('Payments / {0} (JWT Mock)', secrets.POSTMAN_SERVICE_KEY) }}
         run: node scripts/upsert_collection.js
 
+      - name: Small delay to avoid Postman burst limits
+        run: sleep 3
+
       - name: Upsert OAuth2 Ready collection into workspace
         env:
           POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
