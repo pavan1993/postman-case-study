@@ -246,8 +246,9 @@ const REFUND_CREATE_SIMPLE_MARKER = "__REFUND_CREATE_SIMPLE__";
 const REFUND_CREATE_SIMPLE_TEST = `
 // ${REFUND_CREATE_SIMPLE_MARKER}
 let refundId = "${MOCK_REFUND_ID}";
+let parsed = null;
 try {
-  const parsed = pm.response.json();
+  parsed = pm.response.json();
   if (parsed && (parsed.refundId || parsed.id)) {
     refundId = parsed.refundId || parsed.id || refundId;
   }
@@ -256,6 +257,21 @@ pm.environment.set("refundId", String(refundId));
 pm.test("refundId captured", function () {
   const captured = pm.environment.get("refundId");
   pm.expect(captured, "refundId missing in environment").to.be.a("string").and.not.empty;
+});
+let currentCurrency = pm.environment.get("refundCurrency");
+if (!currentCurrency) {
+  let detectedCurrency = null;
+  if (parsed) {
+    detectedCurrency = parsed.refundCurrency || parsed.currency || null;
+  }
+  if (!detectedCurrency) {
+    detectedCurrency = "USD";
+  }
+  pm.environment.set("refundCurrency", String(detectedCurrency));
+}
+pm.test("refund currency present", function () {
+  const currency = pm.environment.get("refundCurrency");
+  pm.expect(currency, "refundCurrency missing in environment").to.be.a("string").and.not.empty;
 });
 `.trim();
 
