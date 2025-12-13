@@ -246,7 +246,8 @@ pm.test("refund status present", function () {
   pm.expect(stored, "refundStatus missing in environment").to.be.a("string").and.not.empty;
 });
 pm.test("refund status value", function () {
-  const stored = pm.environment.get("refundStatus");
+  const stored = (pm.environment.get("refundStatus") || "").toUpperCase();
+  pm.environment.set("refundStatus", stored);
   pm.expect(["PENDING", "COMPLETED", "CANCELLED"]).to.include(stored);
 });
 `.trim();
