@@ -81,16 +81,29 @@ const REFUND_CREATE_TEST = `
 // ${REFUND_CREATE_MARKER}
 let createData = {};
 try { createData = pm.response.json(); } catch (err) { createData = {}; }
-const refundId = createData.refundId || createData.refund_id || createData.id;
-const transactionId = createData.transactionId || createData.transaction_id;
-const status = createData.status || createData.refundStatus || createData.refund_status;
-const amount =
-  createData.amount !== undefined && createData.amount !== null
-    ? createData.amount
-    : createData.refundAmount !== undefined && createData.refundAmount !== null
-    ? createData.refundAmount
-    : createData.refund_amount;
-const currency = createData.currency || createData.refundCurrency || createData.refund_currency;
+const scopes = [
+  createData,
+  createData.refund,
+  createData.data,
+  createData.result,
+  createData.payload,
+  (createData.data && createData.data.refund) || null,
+].filter(Boolean);
+
+function pick(keys) {
+  for (const scope of scopes) {
+    for (const key of keys) {
+      if (scope[key] !== undefined && scope[key] !== null) return scope[key];
+    }
+  }
+  return undefined;
+}
+
+const refundId = pick(["refundId", "refund_id", "id"]);
+const transactionId = pick(["transactionId", "transaction_id"]);
+const status = pick(["status", "refundStatus", "refund_status"]);
+const amount = pick(["amount", "refundAmount", "refund_amount"]);
+const currency = pick(["currency", "refundCurrency", "refund_currency"]);
 
 if (refundId) pm.environment.set("refundId", String(refundId));
 if (transactionId) pm.environment.set("transactionId", String(transactionId));
