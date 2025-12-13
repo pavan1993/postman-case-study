@@ -95,18 +95,18 @@ jobs:
             FAILURES=${FAILURES:-0}
           fi
           cat <<EOF > artifacts/summary.md
-### Run Summary
+          ### Run Summary
 
-- Workflow: ${WORKFLOW}
-- Git SHA: ${GIT_SHA}
-- Ref: ${REF}
-- Run number: ${RUN_NUMBER}
-- Status: ${JOB_STATUS}
-- Newman JUnit: ${JUNIT_PATH} (exists: $( [ -f "$JUNIT_PATH" ] && echo "yes" || echo "no" ))
-- Tests: ${TESTS}
-- Failures: ${FAILURES}
-- Duration (s): ${DURATION}
-EOF
+          - Workflow: ${WORKFLOW}
+          - Git SHA: ${GIT_SHA}
+          - Ref: ${REF}
+          - Run number: ${RUN_NUMBER}
+          - Status: ${JOB_STATUS}
+          - Newman JUnit: ${JUNIT_PATH} (exists: $( [ -f "$JUNIT_PATH" ] && echo "yes" || echo "no" ))
+          - Tests: ${TESTS}
+          - Failures: ${FAILURES}
+          - Duration (s): ${DURATION}
+          EOF
 
       - name: Upsert JWT Mock collection into workspace
         env:
