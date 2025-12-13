@@ -34,22 +34,20 @@
 
 
 # Configuration / Environment Setup
-- GitHub secrets and vars:
-  - `POSTMAN_API_KEY`: Postman key with workspace editor scope (used by all scripts).
-  - `POSTMAN_WORKSPACE_ID`: target domain workspace receiving spec, collections, and environments.
-  - `POSTMAN_SERVICE_KEY`: stable slug per API (used for naming collections/environments).
-  - Optional `vars.POSTMAN_DEBUG`: set to `true` for verbose logging from upsert scripts.
-- CI execution path (GitHub Actions `Ingest Refund API into Postman (Mock + Real Canonicals)`):
-  1. Trigger manually (`workflow_dispatch`) or by pushing changes to `payment-refund-api-openapi.yaml`, `scripts/**`, or `.github/workflows/ingest.yml` on `main`.
-  2. Key subprocesses per run:
-     - `node scripts/ingest.js`: pushes the OpenAPI spec and emits `artifacts/collection.generated.json` (transient; ignore this file outside CI).
-     - `node scripts/patch_collection.js`: generates `artifacts/collection.jwt_mock.json` and `artifacts/collection.oauth2_ready.json`.
-     - `node scripts/mock_server.js` + `npx newman run ...`: validates the JWT Mock collection; JUnit output lands in `artifacts/newman-junit.xml`.
-     - `node scripts/upsert_collection.js`: publishes both auth-mode collections to the workspace.
-     - `node scripts/upsert_envs.js`: ensures Dev/QA/UAT/Prod environments exist once per API.
-     - `node scripts/delete_generated_collection.js`: cleans up the intermediate generated collection.
-     - Artifacts persist under `artifacts/` (collections, Newman reports, `summary.md`), and contractual expectations live in `docs/contracts.md`.
-  3. Weekly hygiene (`Cleanup Postman Collections` workflow) runs `node scripts/cleanup_collections.js` (`RETAIN_LAST_N=5`) to prune legacy versions.
+1. `git clone https://github.com/<org>/postman-case-study.git` (or pull latest) and ensure you have access to the domain’s Postman workspace.
+2. Populate GitHub secrets/vars before running any workflow:
+   - `POSTMAN_API_KEY` (workspace editor scope),
+   - `POSTMAN_WORKSPACE_ID` (target domain workspace),
+   - `POSTMAN_SERVICE_KEY` (stable slug for this API),
+   - optional `vars.POSTMAN_DEBUG=true` for verbose upsert logs.
+3. Commit or update the OpenAPI (`payment-refund-api-openapi.yaml`) and script changes as needed, then push to `main` or trigger **Ingest Refund API into Postman (Mock + Real Canonicals)** via `workflow_dispatch`.
+4. The workflow performs spec ingestion, collection patching, mock validation, collection/environment upserts, and cleanup. Ignore `artifacts/collection.generated.json` outside CI; the durable outputs are:
+   - `artifacts/collection.jwt_mock.json` and `artifacts/collection.oauth2_ready.json` (mirrors of what is published),
+   - `artifacts/newman-junit.xml` (test evidence),
+   - `artifacts/summary.md` (run summary/ROI trace),
+   - governance contracts reference: `docs/contracts.md`.
+5. Verify the Postman workspace shows the updated collections (JWT Mock + OAuth2 Ready) and environments for Dev/QA/UAT/Prod; rerun per API as needed (one API per workflow run today).
+6. Hygiene: allow the scheduled **Cleanup Postman Collections** workflow to keep only the last five versions per collection (`scripts/cleanup_collections.js` with `RETAIN_LAST_N=5`)—no manual cleanup required unless troubleshooting.
 
 # Auth Modes
 - This pipeline emits two Postman collections so teams can pick the right auth path per API boundary.
