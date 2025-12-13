@@ -2,6 +2,13 @@ name: Ingest Refund API into Postman (Mock + Real Canonicals)
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "payment-refund-api-openapi.yaml"
+      - "scripts/**"
+      - ".github/workflows/ingest.yml"
 
 jobs:
   ingest:
