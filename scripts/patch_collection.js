@@ -67,6 +67,69 @@ pm.test("Authorization header attached to outgoing request", () => {
 });
 `.trim();
 
+const REFUND_GUARD_MARKER = "__REFUND_ID_GUARD__";
+const REFUND_GUARD_SCRIPT = `
+// ${REFUND_GUARD_MARKER}
+const refundId = pm.environment.get("refundId");
+if (!refundId || !String(refundId).trim()) {
+  throw new Error("refundId missing. Run the Create Refund request first.");
+}
+`.trim();
+
+const REFUND_CREATE_MARKER = "__REFUND_CREATE_CONTRACT__";
+const REFUND_CREATE_TEST = `
+// ${REFUND_CREATE_MARKER}
+let createData = {};
+try { createData = pm.response.json(); } catch (err) { createData = {}; }
+const refundId = createData.refundId || createData.refund_id || createData.id;
+const transactionId = createData.transactionId || createData.transaction_id;
+const status = createData.status || createData.refundStatus || createData.refund_status;
+const amount =
+  createData.amount !== undefined && createData.amount !== null
+    ? createData.amount
+    : createData.refundAmount !== undefined && createData.refundAmount !== null
+    ? createData.refundAmount
+    : createData.refund_amount;
+const currency = createData.currency || createData.refundCurrency || createData.refund_currency;
+
+if (refundId) pm.environment.set("refundId", String(refundId));
+if (transactionId) pm.environment.set("transactionId", String(transactionId));
+if (status) pm.environment.set("refund_status", status);
+if (amount !== undefined && amount !== null) pm.environment.set("refund_amount", amount);
+if (currency) pm.environment.set("refund_currency", currency);
+
+pm.test("refundId present", function () {
+  pm.expect(refundId, "refundId missing in response").to.be.a("string").and.not.empty;
+});
+
+if (amount !== undefined && amount !== null) {
+  const amountIsNumeric =
+    typeof amount === "number" ||
+    (typeof amount === "string" && amount.trim().length > 0 && !Number.isNaN(Number(amount)));
+  pm.test("refund_amount numeric", function () {
+    pm.expect(amountIsNumeric, "refund_amount must be numeric").to.be.true;
+  });
+}
+
+if (currency) {
+  pm.test("refund_currency present", function () {
+    pm.expect(currency, "refund_currency missing").to.be.a("string").and.match(/^[A-Za-z]{3}$/);
+  });
+}
+`.trim();
+
+const REFUND_STATUS_MARKER = "__REFUND_STATUS_CONTRACT__";
+const REFUND_STATUS_TEST = `
+// ${REFUND_STATUS_MARKER}
+let statusData = {};
+try { statusData = pm.response.json(); } catch (err) { statusData = {}; }
+const latestStatus = statusData.status || statusData.refundStatus || statusData.refund_status;
+if (latestStatus) pm.environment.set("refund_status", latestStatus);
+pm.test("refund status present", function () {
+  pm.expect(latestStatus, "status missing in response").to.exist;
+});
+`.trim();
+
 function normalizeBaseUrlTokens(doc) {
   // Replace common variants to the one standard: {{base_url}}
   let s = JSON.stringify(doc);
@@ -181,6 +244,99 @@ function setName(collection, name) {
   if (collection?.info?.name) collection.info.name = name;
 }
 
+function visitRequests(items, cb) {
+  if (!Array.isArray(items)) return;
+  for (const item of items) {
+    if (item.request) cb(item);
+    if (item.item) visitRequests(item.item, cb);
+  }
+}
+
+function getUrlString(url) {
+  if (!url) return "";
+  if (typeof url === "string") return url;
+  if (typeof url === "object") {
+    if (url.raw) return url.raw;
+    const protocol = url.protocol ? `${url.protocol}://` : "";
+    const host = Array.isArray(url.host) ? url.host.join(".") : url.host || "";
+    const path = Array.isArray(url.path) ? `/${url.path.join("/")}` : url.path || "";
+    const query = Array.isArray(url.query)
+      ? url.query.map((q) => `${q.key}=${q.value ?? ""}`).join("&")
+      : "";
+    return `${protocol}${host}${path}${query ? `?${query}` : ""}`;
+  }
+  return "";
+}
+
+function setUrlString(request, newRaw) {
+  if (!request?.url) {
+    request.url = newRaw;
+    return;
+  }
+  if (typeof request.url === "string") {
+    request.url = newRaw;
+    return;
+  }
+  request.url.raw = newRaw;
+}
+
+function ensureRequestEvent(item, listen, scriptText, marker) {
+  item.event = item.event || [];
+  const exists = item.event.some(
+    (e) => e.listen === listen && (e.script?.exec || []).join("\n").includes(marker)
+  );
+  if (exists) return;
+  item.event.push({
+    listen,
+    script: { type: "text/javascript", exec: scriptText.split("\n") },
+  });
+}
+
+function applyRefundLinking(collection) {
+  if (!collection?.item) return;
+
+  visitRequests(collection.item, (entry) => {
+    const req = entry.request;
+    if (!req) return;
+    const method = (req.method || "").toUpperCase();
+    let urlStr = getUrlString(req.url);
+    if (!urlStr) return;
+
+    const updatedUrl = urlStr
+      .replace(/\/refunds\/:refundId/gi, "/refunds/{{refundId}}")
+      .replace(/\/refunds\/\{refundId\}/gi, "/refunds/{{refundId}}")
+      .replace(/\/refunds\/\{refund_id\}/gi, "/refunds/{{refundId}}")
+      .replace(/\/refunds\/\{\{refund_id\}\}/gi, "/refunds/{{refundId}}");
+
+    if (updatedUrl !== urlStr) {
+      setUrlString(req, updatedUrl);
+      urlStr = updatedUrl;
+    }
+
+    const containsRefundId = /\/refunds\/\{\{refundId\}\}/i.test(urlStr);
+    const isStatusEndpoint = containsRefundId && /\/refunds\/\{\{refundId\}\}\/status\b/i.test(urlStr);
+    const isCancelEndpoint = containsRefundId && /\/refunds\/\{\{refundId\}\}\/cancel\b/i.test(urlStr);
+    const isCreateRefund =
+      method === "POST" &&
+      /\/refunds(?:\b|$|[\?#])/i.test(urlStr) &&
+      !containsRefundId &&
+      !/\/refunds\/.+/i.test(urlStr);
+
+    if (isCreateRefund) {
+      ensureRequestEvent(entry, "test", REFUND_CREATE_TEST, REFUND_CREATE_MARKER);
+    }
+
+    if (containsRefundId) {
+      ensureRequestEvent(entry, "prerequest", REFUND_GUARD_SCRIPT, REFUND_GUARD_MARKER);
+    }
+
+    if (isStatusEndpoint) {
+      ensureRequestEvent(entry, "test", REFUND_STATUS_TEST, REFUND_STATUS_MARKER);
+    }
+
+  });
+}
+
 function buildJwtVariant() {
   const doc = normalizeBaseUrlTokens(JSON.parse(JSON.stringify(rawDoc)));
   const col = doc.collection;
@@ -188,6 +344,7 @@ function buildJwtVariant() {
   enforceJwtAuth(col);
   ensureJwtEvents(col);
   addAuthFolder(col);
+  applyRefundLinking(col);
   const fullName = `Payments / ${SERVICE_KEY} (JWT Mock)`;
   setName(col, fullName);
   return { doc, fullName };
@@ -198,6 +355,7 @@ function buildOauthVariant() {
   const col = doc.collection;
   removeConflictingCollectionVars(col);
   addOauthSetupFolder(col);
+  applyRefundLinking(col);
   const fullName = `Payments / ${SERVICE_KEY} (OAuth2 Ready)`;
   setName(col, fullName);
   return { doc, fullName };
