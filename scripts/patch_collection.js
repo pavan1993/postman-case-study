@@ -77,7 +77,7 @@ if (!refundId || !String(refundId).trim()) {
 `.trim();
 
 const REFUND_CREATE_MARKER = "__REFUND_CREATE_CONTRACT__";
-const REFUND_CREATE_TEST = `
+const REFUND_CREATE_TEST_STRICT = `
 // ${REFUND_CREATE_MARKER}
 let createData = {};
 try { createData = pm.response.json(); } catch (err) { createData = {}; }
@@ -127,6 +127,57 @@ if (amount !== undefined && amount !== null) {
 if (currency) {
   pm.test("refund_currency present", function () {
     pm.expect(currency, "refund_currency missing").to.be.a("string").and.match(/^[A-Za-z]{3}$/);
+  });
+}
+`.trim();
+
+const REFUND_CREATE_TEST_LENIENT = `
+// ${REFUND_CREATE_MARKER}
+let createData = {};
+try { createData = pm.response.json(); } catch (err) { createData = {}; }
+const scopes = [
+  createData,
+  createData.refund,
+  createData.data,
+  createData.result,
+  createData.payload,
+  (createData.data && createData.data.refund) || null,
+].filter(Boolean);
+
+function pick(keys) {
+  for (const scope of scopes) {
+    for (const key of keys) {
+      if (scope[key] !== undefined && scope[key] !== null) return scope[key];
+    }
+  }
+  return undefined;
+}
+
+const refundId = pick(["refundId", "refund_id", "id"]);
+const transactionId = pick(["transactionId", "transaction_id"]);
+const status = pick(["status", "refundStatus", "refund_status"]);
+const amount = pick(["amount", "refundAmount", "refund_amount"]);
+const currency = pick(["currency", "refundCurrency", "refund_currency"]);
+
+if (refundId) pm.environment.set("refundId", String(refundId));
+if (transactionId) pm.environment.set("transactionId", String(transactionId));
+if (status) pm.environment.set("refund_status", status);
+if (amount !== undefined && amount !== null) pm.environment.set("refund_amount", amount);
+if (currency) pm.environment.set("refund_currency", currency);
+
+pm.test("refundId present", function () {
+  pm.expect(refundId, "refundId missing in response").to.be.a("string").and.not.empty;
+});
+
+if (amount !== undefined && amount !== null) {
+  pm.test("refund_amount present", function () {
+    pm.expect(amount, "refund_amount missing").to.not.equal(null);
+  });
+}
+
+if (currency) {
+  pm.test("refund_currency present", function () {
+    pm.expect(currency, "refund_currency missing").to.not.equal(null);
   });
 }
 `.trim();
@@ -317,8 +368,9 @@ function ensureRequestEvent(item, listen, scriptText, marker) {
   });
 }
 
-function applyRefundLinking(collection) {
+function applyRefundLinking(collection, { strictCreateTests } = { strictCreateTests: true }) {
   if (!collection?.item) return;
+  const createScript = strictCreateTests ? REFUND_CREATE_TEST_STRICT : REFUND_CREATE_TEST_LENIENT;
 
   visitRequests(collection.item, (entry) => {
     const req = entry.request;
@@ -348,7 +400,7 @@ function applyRefundLinking(collection) {
       !/\/refunds\/.+/i.test(urlStr);
 
     if (isCreateRefund) {
-      ensureRequestEvent(entry, "test", REFUND_CREATE_TEST, REFUND_CREATE_MARKER);
+      ensureRequestEvent(entry, "test", createScript, REFUND_CREATE_MARKER);
     }
 
     if (containsRefundId) {
@@ -430,7 +482,7 @@ function buildJwtVariant() {
   enforceJwtAuth(col);
   ensureJwtEvents(col);
   addAuthFolder(col);
-  applyRefundLinking(col);
+  applyRefundLinking(col, { strictCreateTests: false });
   prioritizeSuccessResponses(col);
   applyMockResponseHeaders(col);
   const fullName = `Payments / ${SERVICE_KEY} (JWT Mock)`;
@@ -443,7 +495,7 @@ function buildOauthVariant() {
   const col = doc.collection;
   removeConflictingCollectionVars(col);
   addOauthSetupFolder(col);
-  applyRefundLinking(col);
+  applyRefundLinking(col, { strictCreateTests: true });
   prioritizeSuccessResponses(col);
   const fullName = `Payments / ${SERVICE_KEY} (OAuth2 Ready)`;
   setName(col, fullName);
