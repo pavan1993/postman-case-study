@@ -39,6 +39,7 @@ let lastPutSucceeded = false;
 let lastPutError = null;
 let lastFailedPutResponse = null;
 let debugProbesRun = false;
+let rateLimitedSeen = false;
 
 function headers() {
   return {
@@ -138,6 +139,7 @@ async function http(method, url, body, counters = { fivexx: 0, rate: 0, isProbe:
     const rateLimited = isRateLimited(res.status, json);
 
     if (rateLimited) {
+      rateLimitedSeen = true;
       if (counters.rate >= MAX_RATELIMIT_RETRIES) {
         const err = new Error(`${method} ${url} failed: ${res.status}\n${text}`);
         err.status = res.status;
@@ -208,6 +210,9 @@ async function updateCollection(uid, payload) {
   logPayloadSize("PUT");
   lastPutSucceeded = false;
   try {
+    if (rateLimitedSeen) {
+      throw Object.assign(new Error("Rate limit encountered previously."), { status: 429 });
+    }
     const result = await http("PUT", `${BASE}/collections/${uid}`, payload);
     lastPutSucceeded = true;
     lastPutError = null;
@@ -216,6 +221,15 @@ async function updateCollection(uid, payload) {
   } catch (err) {
     lastPutError = err;
     lastFailedPutResponse = err?.response || null;
+    if (rateLimitedSeen) {
+      console.warn("Rate limit encountered; skipping further PUT attempts to prevent burst failures.");
+      throw err;
+    }
+    if (DEBUG && !debugProbesRun && err?.status === 500) {
+      debugProbesRun = true;
+      console.log("[DEBUG] Running minimal PUT probe early to avoid rate-limit contamination.");
+      await runDebugProbes(uid, payload);
+    }
     throw err;
   }
 }
