@@ -41,7 +41,6 @@ let lastFailedPutResponse = null;
 let debugProbesRun = false;
 let rateLimitedSeen = false;
 let versionedPublishUsed = false;
-let versionedPublishUsed = false;
 
 function headers() {
   return {
