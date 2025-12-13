@@ -109,4 +109,5 @@ jobs:
 
       - name: Governance note
         if: always()
-        run: echo "Governance: publishing on main. Retention policy: keep last 5 versioned builds per collection (cleanup via scheduled job)."
+        run: |
+          echo "Governance: publishing on main. Retention policy: keep last 5 versioned builds per collection (cleanup via scheduled job)."
