@@ -40,6 +40,8 @@ let lastPutError = null;
 let lastFailedPutResponse = null;
 let debugProbesRun = false;
 let rateLimitedSeen = false;
+let versionedPublishUsed = false;
+let versionedPublishUsed = false;
 
 function headers() {
   return {
@@ -284,6 +286,24 @@ function writeLastHash(filePath, hash) {
   fs.writeFileSync(filePath, hash);
 }
 
+function versionedCollectionName(base) {
+  const runNumber = process.env.GITHUB_RUN_NUMBER || `${Date.now()}`;
+  return `${base} [build ${runNumber}]`;
+}
+
+async function createVersionedCollection(payload, payloadHash, hashFile) {
+  const clone = JSON.parse(JSON.stringify(payload));
+  const versionedName = versionedCollectionName(COLLECTION_NAME);
+  if (clone?.collection?.info?.name) clone.collection.info.name = versionedName;
+  console.log(`Publishing fallback collection via POST as '${versionedName}'`);
+  console.log(`Pausing ${PRE_WRITE_DELAY_MS}ms before write to avoid Postman API burst limits.`);
+  await sleep(PRE_WRITE_DELAY_MS);
+  const out = await createInWorkspace(clone);
+  console.log("✅ Published versioned collection uid:", out?.collection?.uid);
+  versionedPublishUsed = true;
+  writeLastHash(hashFile, payloadHash);
+}
+
 function buildMinimalProbePayload(payload) {
   const clone = JSON.parse(JSON.stringify(payload));
   if (!clone?.collection) return clone;
@@ -383,6 +403,18 @@ async function main() {
       if (DEBUG && err?.status === 500) {
         await runDebugProbes(existingUid, payload);
       }
+      const shouldVersionedPublish =
+        rateLimitedSeen || (err?.status && err.status >= 500 && err.status < 600);
+
+      if (shouldVersionedPublish) {
+        console.warn("PUT update failed/unreliable; published versioned collection via POST instead.");
+        await createVersionedCollection(payload, payloadHash, hashFile);
+        console.log(
+          "Cleanup policy: keep last N builds; delete older versions manually or via scheduled job."
+        );
+        return;
+      }
+
       console.warn("⚠️ PUT update failed; attempting delete + recreate fallback.", err?.message || err);
       try {
         await deleteCollection(existingUid);
