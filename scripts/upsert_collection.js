@@ -24,6 +24,7 @@ if (!API_KEY || !WORKSPACE_ID || !COLLECTION_FILE || !COLLECTION_NAME) {
 }
 
 const BASE = "https://api.getpostman.com";
+const DEBUG = process.env.POSTMAN_DEBUG === "1";
 
 const RETRY_STATUSES = new Set([500, 502, 503, 504]);
 const MAX_5XX_RETRIES = 4;
@@ -34,6 +35,9 @@ const PRE_WRITE_DELAY_MS = 1500;
 const MIN_INTERVAL_MS = 2000;
 let lastApiCall = 0;
 let payloadMetrics = null;
+let lastPutSucceeded = false;
+let lastPutError = null;
+let lastFailedPutResponse = null;
 
 function headers() {
   return {
@@ -99,6 +103,7 @@ function rateLimitDelay(headers) {
 
 async function http(method, url, body, counters = { fivexx: 0, rate: 0 }) {
   await throttle();
+  const start = Date.now();
   const res = await fetch(url, {
     method,
     headers: headers(),
@@ -111,6 +116,21 @@ async function http(method, url, body, counters = { fivexx: 0, rate: 0 }) {
     json = JSON.parse(text);
   } catch {
     json = { raw: text };
+  }
+
+  if (DEBUG) {
+    const truncated = text.length > 2000 ? `${text.slice(0, 2000)}…` : text;
+    const headerLogKeys = ["x-ratelimit-remaining", "x-ratelimit-reset", "x-ratelimit-retryafter", "retry-after", "x-request-id"];
+    const headerLog = {};
+    for (const key of headerLogKeys) {
+      const val = res.headers.get(key);
+      if (val) headerLog[key] = val;
+    }
+    console.log(
+      `[DEBUG] ${method} ${url} -> ${res.status} (${Date.now() - start}ms)\nHeaders: ${JSON.stringify(
+        headerLog
+      )}\nBody: ${truncated}`
+    );
   }
 
   if (!res.ok) {
@@ -185,9 +205,18 @@ async function fetchCollection(uid) {
 
 async function updateCollection(uid, payload) {
   logPayloadSize("PUT");
-  return http("PUT", `${BASE}/collections/${uid}`, payload);
+  lastPutSucceeded = false;
+  try {
+    const result = await http("PUT", `${BASE}/collections/${uid}`, payload);
+    lastPutSucceeded = true;
+    lastPutError = null;
+    return result;
+  } catch (err) {
+    lastPutError = err;
+    lastFailedPutResponse = err?.response || null;
+    throw err;
+  }
 }
-
 async function deleteCollection(uid) {
   return http("DELETE", `${BASE}/collections/${uid}`);
 }
@@ -239,6 +268,50 @@ function writeLastHash(filePath, hash) {
   fs.writeFileSync(filePath, hash);
 }
 
+function buildMinimalProbePayload(payload) {
+  const clone = JSON.parse(JSON.stringify(payload));
+  if (!clone?.collection) return clone;
+  delete clone.collection.event;
+
+  function stripResponses(items) {
+    if (!Array.isArray(items)) return;
+    for (const item of items) {
+      if (Array.isArray(item?.response)) delete item.response;
+      if (item?.item) stripResponses(item.item);
+    }
+  }
+
+  stripResponses(clone.collection.item);
+  return clone;
+}
+
+async function runDebugProbes(uid, payload) {
+  console.log(`[DEBUG] PUT 500 detected for ${COLLECTION_NAME} (${uid}). Running diagnostic probes...`);
+  let getSummary = "not-run";
+  let minimalSummary = "not-run";
+
+  try {
+    const probe = await fetchCollection(uid);
+    const name = probe?.collection?.info?.name || "unknown";
+    const updatedAt = probe?.collection?.info?.updatedAt || probe?.collection?.info?.updated_at || "n/a";
+    getSummary = `success (name=${name}, updatedAt=${updatedAt})`;
+  } catch (err) {
+    getSummary = `error (status=${err?.status || "n/a"} message=${err?.message || err})`;
+  }
+
+  const minimalPayload = buildMinimalProbePayload(payload);
+  try {
+    await http("PUT", `${BASE}/collections/${uid}`, minimalPayload);
+    minimalSummary = "success";
+  } catch (err) {
+    minimalSummary = `error (status=${err?.status || "n/a"} message=${err?.message || err})`;
+  }
+
+  console.log(
+    `[DEBUG] Probe summary -> Original PUT status: ${lastPutError?.status || "unknown"}, GET probe: ${getSummary}, minimal PUT probe: ${minimalSummary}`
+  );
+}
+
 async function main() {
   const rawPayload = fs.readFileSync(COLLECTION_FILE, "utf8");
   payloadMetrics = computePayloadMetrics(rawPayload);
@@ -285,6 +358,9 @@ async function main() {
       writeLastHash(hashFile, payloadHash);
       return;
     } catch (err) {
+      if (DEBUG && err?.status === 500) {
+        await runDebugProbes(existingUid, payload);
+      }
       console.warn("⚠️ PUT update failed; attempting delete + recreate fallback.", err?.message || err);
       try {
         await deleteCollection(existingUid);
