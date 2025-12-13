@@ -328,7 +328,7 @@ function ensureHealthFolder(collection) {
     collection.item.push(folder);
   }
   folder.item = folder.item || [];
-  const predicate = (entry) => requestMatches(entry, "GET", /\\/health\\b/i);
+  const predicate = (entry) => requestMatches(entry, "GET", /\/health\b/i);
   let healthRequest = pluckRequest(folder.item, predicate);
   if (!healthRequest) {
     healthRequest = extractRequest(collection.item, predicate, new Set([folder]));
