@@ -88,11 +88,23 @@ jobs:
           RUN_NUMBER="${{ github.run_number }}"
           JOB_STATUS="${{ job.status }}"
           if [ -f "$JUNIT_PATH" ]; then
-            LINE=$(grep -m1 -o 'tests="[^"]*" failures="[^"]*"' "$JUNIT_PATH" || true)
-            TESTS=$(echo "$LINE" | sed -n 's/.*tests="\([^"]*\)".*/\1/p')
-            FAILURES=$(echo "$LINE" | sed -n 's/.*failures="\([^"]*\)".*/\1/p')
-            TESTS=${TESTS:-0}
-            FAILURES=${FAILURES:-0}
+            read_tests_failures=$(node -e "
+              const fs = require('fs');
+              const xml = fs.readFileSync(process.argv[1], 'utf8');
+              const result = { tests: 0, failures: 0 };
+              const suitesMatch = xml.match(/<testsuites[^>]*\\stests=\\"(\\d+)\\"[^>]*>/i);
+              if (suitesMatch) result.tests = Number(suitesMatch[1]) || 0;
+              const suitesFailureMatch = xml.match(/<testsuites[^>]*\\sfailures=\\"(\\d+)\\"[^>]*>/i);
+              if (suitesFailureMatch) {
+                result.failures = Number(suitesFailureMatch[1]) || 0;
+              } else {
+                const matches = [...xml.matchAll(/<testsuite[^>]*\\sfailures=\\"(\\d+)\\"[^>]*>/gi)];
+                result.failures = matches.reduce((sum, m) => sum + (Number(m[1]) || 0), 0);
+              }
+              console.log(JSON.stringify(result));
+            " "$JUNIT_PATH")
+            TESTS=$(echo "$read_tests_failures" | node -p "JSON.parse(fs.readFileSync(0,'utf8')).tests")
+            FAILURES=$(echo "$read_tests_failures" | node -p "JSON.parse(fs.readFileSync(0,'utf8')).failures")
           fi
           cat <<EOF > artifacts/summary.md
           ### Run Summary
