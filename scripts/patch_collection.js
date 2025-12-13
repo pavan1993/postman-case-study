@@ -98,6 +98,25 @@ const EDGE_CASE_MARKERS = {
   RATE_LIMIT_429: "__EDGE_RATE_LIMIT_429__",
 };
 
+const CONTRACT_CHECK_MARKER = "__CONTRACT_CHECK__";
+const CONTRACT_CHECK_TEST = `
+// ${CONTRACT_CHECK_MARKER}
+pm.test("contract check HTTP 200", function () {
+  pm.expect(pm.response.code).to.eql(200);
+});
+const requiredVars = ["refundId", "refundCurrency", "refundStatus"];
+const missing = requiredVars.filter((key) => {
+  const value = pm.environment.get(key);
+  return !value || String(value).trim().length === 0;
+});
+requiredVars.forEach((key) => {
+  console.log("[contract]", key, "=", pm.environment.get(key));
+});
+pm.test("output contract satisfied", function () {
+  pm.expect(missing.length, "Missing vars: " + JSON.stringify(missing)).to.equal(0);
+});
+`.trim();
+
 const REFUND_GUARD_MARKER = "__REFUND_ID_GUARD__";
 const REFUND_GUARD_SCRIPT = `
 // ${REFUND_GUARD_MARKER}
@@ -540,6 +559,25 @@ function ensureReportingFolder(collection) {
   folder.item = [canonical, ...retained];
 }
 
+function ensureContractCheckFolder(collection) {
+  const folder = ensureFolder(collection, "98 - Contract Check");
+  folder.item = folder.item || [];
+  let requestItem = folder.item.find((entry) => entry?.name === "GET Contract Check (Health)");
+  if (!requestItem) {
+    requestItem = {
+      name: "GET Contract Check (Health)",
+      request: { method: "GET", header: [], url: "{{base_url}}/health" },
+      event: [],
+    };
+    folder.item.unshift(requestItem);
+  }
+  requestItem.name = "GET Contract Check (Health)";
+  requestItem.request = requestItem.request || {};
+  requestItem.request.method = "GET";
+  setUrlString(requestItem.request, "{{base_url}}/health");
+  ensureRequestEvent(requestItem, "test", CONTRACT_CHECK_TEST, CONTRACT_CHECK_MARKER);
+}
+
 function addOauthSetupFolder(collection) {
   collection.item = collection.item || [];
   if (collection.item.some((it) => it.name === "00 - OAuth2 Setup")) return;
@@ -914,18 +952,20 @@ function buildJwtVariant() {
   ensureHealthFolder(col);
   ensureRefundFlowFolder(col);
   ensureReportingFolder(col);
+  ensureContractCheckFolder(col);
+  ensureEdgeCaseFolder(col);
   reorderTopFolders(col, [
     "00 - Auth",
     "01 - Health",
     "02 - Refund Flow",
     "03 - Reporting",
+    "98 - Contract Check",
     "99 - Edge Cases (Optional)",
   ]);
   ensureAuthGuards(col);
   ensureHealthGuards(col);
   prioritizeSuccessResponses(col);
   applyMockResponseHeaders(col);
-  ensureEdgeCaseFolder(col);
   removeEmptyTopFolders(col);
   const fullName = `Payments / ${SERVICE_KEY} (JWT Mock)`;
   setName(col, fullName);
@@ -941,16 +981,18 @@ function buildOauthVariant() {
   ensureHealthFolder(col);
   ensureRefundFlowFolder(col);
   ensureReportingFolder(col);
+  ensureContractCheckFolder(col);
+  ensureEdgeCaseFolder(col);
   reorderTopFolders(col, [
     "00 - OAuth2 Setup",
     "01 - Health",
     "02 - Refund Flow",
     "03 - Reporting",
+    "98 - Contract Check",
     "99 - Edge Cases (Optional)",
   ]);
   ensureHealthGuards(col);
   prioritizeSuccessResponses(col);
-  ensureEdgeCaseFolder(col);
   removeEmptyTopFolders(col);
   const fullName = `Payments / ${SERVICE_KEY} (OAuth2 Ready)`;
   setName(col, fullName);
