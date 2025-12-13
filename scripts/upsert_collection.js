@@ -38,6 +38,7 @@ let payloadMetrics = null;
 let lastPutSucceeded = false;
 let lastPutError = null;
 let lastFailedPutResponse = null;
+let debugProbesRun = false;
 
 function headers() {
   return {
@@ -101,7 +102,7 @@ function rateLimitDelay(headers) {
   return null;
 }
 
-async function http(method, url, body, counters = { fivexx: 0, rate: 0 }) {
+async function http(method, url, body, counters = { fivexx: 0, rate: 0, isProbe: false }) {
   await throttle();
   const start = Date.now();
   const res = await fetch(url, {
@@ -127,7 +128,7 @@ async function http(method, url, body, counters = { fivexx: 0, rate: 0 }) {
       if (val) headerLog[key] = val;
     }
     console.log(
-      `[DEBUG] ${method} ${url} -> ${res.status} (${Date.now() - start}ms)\nHeaders: ${JSON.stringify(
+      `[DEBUG] ${method} ${url}${counters.isProbe ? " [probe]" : ""} -> ${res.status} (${Date.now() - start}ms)\nHeaders: ${JSON.stringify(
         headerLog
       )}\nBody: ${truncated}`
     );
@@ -210,6 +211,7 @@ async function updateCollection(uid, payload) {
     const result = await http("PUT", `${BASE}/collections/${uid}`, payload);
     lastPutSucceeded = true;
     lastPutError = null;
+    debugProbesRun = false;
     return result;
   } catch (err) {
     lastPutError = err;
@@ -273,15 +275,18 @@ function buildMinimalProbePayload(payload) {
   if (!clone?.collection) return clone;
   delete clone.collection.event;
 
-  function stripResponses(items) {
+  function stripItems(items) {
     if (!Array.isArray(items)) return;
     for (const item of items) {
       if (Array.isArray(item?.response)) delete item.response;
-      if (item?.item) stripResponses(item.item);
+      if (Array.isArray(item?.event)) delete item.event;
+      if (item?.request?.auth) delete item.request.auth;
+      if (item?.item) stripItems(item.item);
     }
   }
 
-  stripResponses(clone.collection.item);
+  stripItems(clone.collection.item);
+  if (clone.collection?.auth) delete clone.collection.auth;
   return clone;
 }
 
@@ -294,14 +299,17 @@ async function runDebugProbes(uid, payload) {
     const probe = await fetchCollection(uid);
     const name = probe?.collection?.info?.name || "unknown";
     const updatedAt = probe?.collection?.info?.updatedAt || probe?.collection?.info?.updated_at || "n/a";
+    const reqId = probe?._request?.headers?.["x-request-id"] || "n/a";
     getSummary = `success (name=${name}, updatedAt=${updatedAt})`;
+    console.log(`[DEBUG] Probe GET success. Name: ${name}, updatedAt: ${updatedAt}, x-request-id: ${reqId}`);
   } catch (err) {
     getSummary = `error (status=${err?.status || "n/a"} message=${err?.message || err})`;
+    console.warn("[DEBUG] UID read failed during probe.", err);
   }
 
   const minimalPayload = buildMinimalProbePayload(payload);
   try {
-    await http("PUT", `${BASE}/collections/${uid}`, minimalPayload);
+    await http("PUT", `${BASE}/collections/${uid}`, minimalPayload, { fivexx: 0, rate: 0, isProbe: true });
     minimalSummary = "success";
   } catch (err) {
     minimalSummary = `error (status=${err?.status || "n/a"} message=${err?.message || err})`;
