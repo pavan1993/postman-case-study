@@ -21,6 +21,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Capture start timestamp
+        run: echo "START_TS=$(date +%s)" >> "$GITHUB_ENV"
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -69,6 +72,36 @@ jobs:
           if [ -f /tmp/mock_pid ]; then
             kill "$(cat /tmp/mock_pid)" || true
           fi
+
+      - name: Generate run summary (ROI)
+        if: always()
+        run: |
+          mkdir -p artifacts
+          END_TS=$(date +%s)
+          DURATION=$((END_TS - ${START_TS:-END_TS}))
+          JUNIT_PATH="artifacts/newman-junit.xml"
+          TESTS="0"
+          FAILURES="0"
+          if [ -f "$JUNIT_PATH" ]; then
+            LINE=$(grep -m1 -o 'tests="[^"]*" failures="[^"]*"' "$JUNIT_PATH" || true)
+            TESTS=$(echo "$LINE" | sed -n 's/.*tests="\([^"]*\)".*/\1/p')
+            FAILURES=$(echo "$LINE" | sed -n 's/.*failures="\([^"]*\)".*/\1/p')
+            TESTS=${TESTS:-0}
+            FAILURES=${FAILURES:-0}
+          fi
+          cat <<EOF > artifacts/summary.md
+### Run Summary
+
+- Workflow: ${{ github.workflow }}
+- Git SHA: ${{ github.sha }}
+- Ref: ${{ github.ref }}
+- Run number: ${{ github.run_number }}
+- Status: ${{ job.status }}
+- Newman JUnit: ${JUNIT_PATH} (exists: $( [ -f "$JUNIT_PATH" ] && echo "yes" || echo "no" ))
+- Tests: ${TESTS}
+- Failures: ${FAILURES}
+- Duration (s): ${DURATION}
+EOF
 
       - name: Upsert JWT Mock collection into workspace
         env:
