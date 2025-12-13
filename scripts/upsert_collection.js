@@ -30,6 +30,7 @@ const MAX_5XX_RETRIES = 4;
 const MAX_RATELIMIT_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
 const RATE_LIMIT_MIN_DELAY_MS = 30000;
+const PRE_WRITE_DELAY_MS = 1500;
 const MIN_INTERVAL_MS = 2000;
 let lastApiCall = 0;
 let payloadMetrics = null;
@@ -275,6 +276,8 @@ async function main() {
         err?.message || err
       );
     }
+    console.log(`Pausing ${PRE_WRITE_DELAY_MS}ms before write to avoid Postman API burst limits.`);
+    await sleep(PRE_WRITE_DELAY_MS);
     console.log("Updating collection:", COLLECTION_NAME, "uid:", existingUid);
     try {
       await updateCollection(existingUid, payload);
@@ -297,6 +300,8 @@ async function main() {
   }
 
   console.log("Creating collection:", COLLECTION_NAME);
+  console.log(`Pausing ${PRE_WRITE_DELAY_MS}ms before write to avoid Postman API burst limits.`);
+  await sleep(PRE_WRITE_DELAY_MS);
   const out = await createInWorkspace(payload);
   console.log("✅ Created uid:", out?.collection?.uid);
   writeLastHash(hashFile, payloadHash);
