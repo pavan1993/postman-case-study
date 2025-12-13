@@ -39,20 +39,20 @@ jobs:
           POSTMAN_SERVICE_KEY: ${{ secrets.POSTMAN_SERVICE_KEY }}
         run: node scripts/patch_collection.js
 
-      - name: Upsert Mock collection into workspace
+      - name: Upsert JWT Mock collection into workspace
         env:
           POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
           POSTMAN_WORKSPACE_ID: ${{ secrets.POSTMAN_WORKSPACE_ID }}
-          POSTMAN_COLLECTION_FILE: artifacts/collection.mock.json
-          POSTMAN_COLLECTION_NAME: ${{ format('Payments / {0} (Mock)', secrets.POSTMAN_SERVICE_KEY) }}
+          POSTMAN_COLLECTION_FILE: artifacts/collection.jwt_mock.json
+          POSTMAN_COLLECTION_NAME: ${{ format('Payments / {0} (JWT Mock)', secrets.POSTMAN_SERVICE_KEY) }}
         run: node scripts/upsert_collection.js
 
-      - name: Upsert Real collection into workspace
+      - name: Upsert OAuth2 Ready collection into workspace
         env:
           POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
           POSTMAN_WORKSPACE_ID: ${{ secrets.POSTMAN_WORKSPACE_ID }}
-          POSTMAN_COLLECTION_FILE: artifacts/collection.real.json
-          POSTMAN_COLLECTION_NAME: ${{ format('Payments / {0} (Real)', secrets.POSTMAN_SERVICE_KEY) }}
+          POSTMAN_COLLECTION_FILE: artifacts/collection.oauth2_ready.json
+          POSTMAN_COLLECTION_NAME: ${{ format('Payments / {0} (OAuth2 Ready)', secrets.POSTMAN_SERVICE_KEY) }}
         run: node scripts/upsert_collection.js
 
       - name: Upsert environments (Dev/QA/UAT/Prod) into Postman (no duplicates)

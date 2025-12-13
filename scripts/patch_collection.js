@@ -3,8 +3,8 @@ import fs from "fs";
 const SERVICE_KEY = process.env.POSTMAN_SERVICE_KEY || "payment-refund-api";
 
 const inPath = "artifacts/collection.generated.json";
-const outMock = "artifacts/collection.mock.json";
-const outReal = "artifacts/collection.real.json";
+const outJwt = "artifacts/collection.jwt_mock.json";
+const outOauth = "artifacts/collection.oauth2_ready.json";
 
 const rawDoc = JSON.parse(fs.readFileSync(inPath, "utf8"));
 
@@ -84,7 +84,7 @@ function removeConflictingCollectionVars(collection) {
   });
 }
 
-function ensureEvents(collection) {
+function ensureJwtEvents(collection) {
   collection.event = collection.event || [];
 
   if (!collection.event.some((e) => e.listen === "prerequest")) {
@@ -140,35 +140,74 @@ function addAuthFolder(collection) {
   collection.item.unshift({ name: "00 - Auth", item: [authRequest] });
 }
 
+function addOauthSetupFolder(collection) {
+  collection.item = collection.item || [];
+  if (collection.item.some((it) => it.name === "00 - OAuth2 Setup")) return;
+
+  const oauthRequest = {
+    name: "OAuth2 Token Placeholder",
+    request: {
+      method: "POST",
+      header: [{ key: "Content-Type", value: "application/x-www-form-urlencoded" }],
+      url: "{{oauth_token_url}}",
+      body: {
+        mode: "urlencoded",
+        urlencoded: [
+          { key: "grant_type", value: "client_credentials", type: "text" },
+          { key: "client_id", value: "{{oauth_client_id}}", type: "text" },
+          { key: "client_secret", value: "{{oauth_client_secret}}", type: "text" },
+          { key: "scope", value: "{{oauth_scopes}}", type: "text" },
+        ],
+      },
+    },
+    event: [
+      {
+        listen: "test",
+        script: {
+          type: "text/javascript",
+          exec: [
+            'console.log("OAuth2 Token Placeholder: configure oauth_token_url/oauth_client_id/etc. with your IdP.");',
+            'pm.test("OAuth2 placeholder noop", function () { pm.expect(true).to.be.true; });',
+          ],
+        },
+      },
+    ],
+  };
+
+  collection.item.unshift({ name: "00 - OAuth2 Setup", item: [oauthRequest] });
+}
+
 function setName(collection, name) {
   if (collection?.info?.name) collection.info.name = name;
 }
 
-function buildVariant(variantName) {
-  // Start from normalized base_url tokens
-  const doc = normalizeBaseUrlTokens(rawDoc);
+function buildJwtVariant() {
+  const doc = normalizeBaseUrlTokens(JSON.parse(JSON.stringify(rawDoc)));
   const col = doc.collection;
-
-  // Force env-var usage only
   removeConflictingCollectionVars(col);
   enforceJwtAuth(col);
-
-  // Add auth + scripts (both variants get them; real backend can later swap token endpoint)
-  ensureEvents(col);
+  ensureJwtEvents(col);
   addAuthFolder(col);
-
-  // Name the collection deterministically
-  const fullName = `Payments / ${SERVICE_KEY} (${variantName})`;
+  const fullName = `Payments / ${SERVICE_KEY} (JWT Mock)`;
   setName(col, fullName);
-
   return { doc, fullName };
 }
 
-const mock = buildVariant("Mock");
-fs.mkdirSync("artifacts", { recursive: true });
-fs.writeFileSync(outMock, JSON.stringify(mock.doc, null, 2));
-console.log("✅ Wrote", outMock, "name:", mock.fullName);
+function buildOauthVariant() {
+  const doc = normalizeBaseUrlTokens(JSON.parse(JSON.stringify(rawDoc)));
+  const col = doc.collection;
+  removeConflictingCollectionVars(col);
+  addOauthSetupFolder(col);
+  const fullName = `Payments / ${SERVICE_KEY} (OAuth2 Ready)`;
+  setName(col, fullName);
+  return { doc, fullName };
+}
 
-const real = buildVariant("Real");
-fs.writeFileSync(outReal, JSON.stringify(real.doc, null, 2));
-console.log("✅ Wrote", outReal, "name:", real.fullName);
+const jwtVariant = buildJwtVariant();
+fs.mkdirSync("artifacts", { recursive: true });
+fs.writeFileSync(outJwt, JSON.stringify(jwtVariant.doc, null, 2));
+console.log("✅ Wrote", outJwt, "name:", jwtVariant.fullName);
+
+const oauthVariant = buildOauthVariant();
+fs.writeFileSync(outOauth, JSON.stringify(oauthVariant.doc, null, 2));
+console.log("✅ Wrote", outOauth, "name:", oauthVariant.fullName);

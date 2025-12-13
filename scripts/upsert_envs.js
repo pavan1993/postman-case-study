@@ -47,6 +47,12 @@ function envBody(name, baseUrl) {
         { key: "base_url", value: baseUrl, enabled: true },
         { key: "access_token", value: "", enabled: true },
         { key: "token_exp", value: "", enabled: true },
+        { key: "oauth_client_id", value: "REPLACE_ME", enabled: true },
+        { key: "oauth_client_secret", value: "REPLACE_ME", enabled: true },
+        { key: "oauth_token_url", value: "https://example.com/oauth/token", enabled: true },
+        { key: "oauth_auth_url", value: "https://example.com/oauth/authorize", enabled: true },
+        { key: "oauth_scopes", value: "refunds.read refunds.write", enabled: true },
+        { key: "oauth_redirect_uri", value: "https://oauth.pstmn.io/v1/callback", enabled: true },
       ],
     },
   };
