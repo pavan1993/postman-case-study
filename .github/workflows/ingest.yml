@@ -11,7 +11,7 @@ on:
       - ".github/workflows/ingest.yml"
 
 concurrency:
-  group: postman-ingest-${{ github.ref }}
+  group: postman-publish-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -106,3 +106,7 @@ jobs:
         with:
           name: postman-artifacts
           path: artifacts/
+
+      - name: Governance note
+        if: always()
+        run: echo "Governance: publishing on main. Retention policy: keep last 5 versioned builds per collection (cleanup via scheduled job)."

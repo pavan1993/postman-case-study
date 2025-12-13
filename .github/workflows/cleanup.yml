@@ -1,0 +1,28 @@
+name: Cleanup Postman Collections
+
+on:
+  schedule:
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install node-fetch@3
+
+      - name: Run cleanup script
+        env:
+          POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
+          POSTMAN_WORKSPACE_ID: ${{ secrets.POSTMAN_WORKSPACE_ID }}
+          RETAIN_LAST_N: '5'
+        run: node scripts/cleanup_collections.js

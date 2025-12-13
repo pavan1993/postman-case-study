@@ -67,6 +67,30 @@ pm.test("Authorization header attached to outgoing request", () => {
 });
 `.trim();
 
+const AUTH_GUARD_MARKER = "__AUTH_GUARD__";
+const AUTH_GUARD_SCRIPT = `
+// ${AUTH_GUARD_MARKER}
+pm.test("Auth token acquired", () => pm.response.code >= 200 && pm.response.code < 300);
+if (pm.response.code < 200 || pm.response.code >= 300) {
+  postman.setNextRequest(null);
+}
+`.trim();
+
+const HEALTH_GUARD_MARKER = "__HEALTH_GUARD__";
+const HEALTH_GUARD_SCRIPT = `
+// ${HEALTH_GUARD_MARKER}
+pm.test("Health OK", () => pm.response.code === 200);
+if (pm.response.code !== 200) {
+  postman.setNextRequest(null);
+}
+`.trim();
+
+const EDGE_CASE_MARKERS = {
+  STATUS_404: "__EDGE_STATUS_404__",
+  BAD_REQUEST_400: "__EDGE_BAD_REQUEST_400__",
+  RATE_LIMIT_429: "__EDGE_RATE_LIMIT_429__",
+};
+
 const REFUND_GUARD_MARKER = "__REFUND_ID_GUARD__";
 const REFUND_GUARD_SCRIPT = `
 // ${REFUND_GUARD_MARKER}
@@ -114,6 +138,12 @@ if (currency) pm.environment.set("refund_currency", currency);
 pm.test("refundId present", function () {
   pm.expect(refundId, "refundId missing in response").to.be.a("string").and.not.empty;
 });
+
+if (refundId) {
+  pm.test("refundId format", function () {
+    pm.expect(String(refundId), "refundId format").to.match(/^rfnd_/);
+  });
+}
 
 if (amount !== undefined && amount !== null) {
   const amountIsNumeric =
@@ -168,6 +198,12 @@ if (currency) pm.environment.set("refund_currency", currency);
 pm.test("refundId present", function () {
   pm.expect(refundId, "refundId missing in response").to.be.a("string").and.not.empty;
 });
+
+if (refundId) {
+  pm.test("refundId format", function () {
+    pm.expect(String(refundId), "refundId format").to.match(/^rfnd_/);
+  });
+}
 
 if (amount !== undefined && amount !== null) {
   pm.test("refund_amount present", function () {
@@ -267,6 +303,120 @@ function addAuthFolder(collection) {
   collection.item.unshift({ name: "00 - Auth", item: [authRequest] });
 }
 
+function findFolder(collection, folderName) {
+  return (collection.item || []).find((it) => it.name === folderName && Array.isArray(it.item));
+}
+
+function reorderTopFolders(collection, orderedNames) {
+  if (!Array.isArray(collection.item)) return;
+  const lookup = new Map();
+  for (const item of collection.item) {
+    if (orderedNames.includes(item.name) && !lookup.has(item.name)) {
+      lookup.set(item.name, item);
+    }
+  }
+  const ordered = orderedNames.map((name) => lookup.get(name)).filter(Boolean);
+  const rest = collection.item.filter((item) => !orderedNames.includes(item.name));
+  collection.item = [...ordered, ...rest];
+}
+
+function ensureHealthFolder(collection) {
+  collection.item = collection.item || [];
+  let folder = findFolder(collection, "01 - Health");
+  if (!folder) {
+    folder = { name: "01 - Health", item: [] };
+    collection.item.push(folder);
+  }
+  folder.item = folder.item || [];
+  const predicate = (entry) => requestMatches(entry, "GET", /\\/health\\b/i);
+  let healthRequest = pluckRequest(folder.item, predicate);
+  if (!healthRequest) {
+    healthRequest = extractRequest(collection.item, predicate, new Set([folder]));
+  }
+  if (!healthRequest) {
+    healthRequest = {
+      name: "GET Health",
+      request: {
+        method: "GET",
+        header: [],
+        url: "{{base_url}}/health",
+      },
+    };
+  }
+  healthRequest.name = "GET Health";
+  setUrlString(healthRequest.request, "{{base_url}}/health");
+  folder.item = [healthRequest, ...folder.item];
+}
+
+function ensureRefundFlowFolder(collection) {
+  collection.item = collection.item || [];
+  let folder = findFolder(collection, "02 - Refund Flow");
+  if (!folder) {
+    folder = { name: "02 - Refund Flow", item: [] };
+    collection.item.push(folder);
+  }
+  folder.item = folder.item || [];
+  const exclude = new Set([folder]);
+  const specs = [
+    {
+      name: "POST Create Refund",
+      method: "POST",
+      pattern: /\\/refunds(?!\\/\\{\\{refundId\\}\\})/i,
+    },
+    {
+      name: "GET Refund Details",
+      method: "GET",
+      pattern: /\\/refunds\\/\\{\\{refundId\\}\\}(?:$|[?#])/i,
+    },
+    {
+      name: "GET Refund Status",
+      method: "GET",
+      pattern: /\\/refunds\\/\\{\\{refundId\\}\\}\\/status/i,
+    },
+    {
+      name: "POST Cancel Refund",
+      method: "POST",
+      pattern: /\\/refunds\\/\\{\\{refundId\\}\\}\\/cancel/i,
+      optional: true,
+    },
+  ];
+  const ordered = [];
+  for (const spec of specs) {
+    const predicate = (entry) => requestMatches(entry, spec.method, spec.pattern);
+    let requestItem = pluckRequest(folder.item, predicate);
+    if (!requestItem) {
+      requestItem = extractRequest(collection.item, predicate, exclude);
+    }
+    if (!requestItem) {
+      if (spec.optional) continue;
+    } else {
+      requestItem.name = spec.name;
+      ordered.push(requestItem);
+      continue;
+    }
+    if (!spec.optional) {
+      // Placeholder create when missing
+      ordered.push({
+        name: spec.name,
+        request: {
+          method: spec.method,
+          header: [],
+          url:
+            spec.name === "POST Create Refund"
+              ? "{{base_url}}/refunds"
+              : spec.name === "GET Refund Details"
+              ? "{{base_url}}/refunds/{{refundId}}"
+              : spec.name === "GET Refund Status"
+              ? "{{base_url}}/refunds/{{refundId}}/status"
+              : "{{base_url}}/refunds/{{refundId}}/cancel",
+        },
+      });
+    }
+  }
+  const existing = folder.item.filter((entry) => !ordered.includes(entry));
+  folder.item = [...ordered, ...existing];
+}
+
 function addOauthSetupFolder(collection) {
   collection.item = collection.item || [];
   if (collection.item.some((it) => it.name === "00 - OAuth2 Setup")) return;
@@ -354,6 +504,44 @@ function setUrlString(request, newRaw) {
     return;
   }
   request.url.raw = newRaw;
+}
+
+function requestMatches(item, method, urlPattern) {
+  if (!item?.request) return false;
+  const reqMethod = (item.request.method || "").toUpperCase();
+  if (method && reqMethod !== method.toUpperCase()) return false;
+  const urlStr = getUrlString(item.request.url);
+  if (!urlPattern) return true;
+  return urlPattern.test(urlStr);
+}
+
+function pluckRequest(items, predicate) {
+  if (!Array.isArray(items)) return null;
+  for (let i = 0; i < items.length; i += 1) {
+    const entry = items[i];
+    if (entry?.request && predicate(entry)) {
+      items.splice(i, 1);
+      return entry;
+    }
+  }
+  return null;
+}
+
+function extractRequest(items, predicate, exclude = new Set()) {
+  if (!Array.isArray(items)) return null;
+  for (let i = 0; i < items.length; i += 1) {
+    const entry = items[i];
+    if (exclude.has(entry)) continue;
+    if (entry?.request && predicate(entry)) {
+      items.splice(i, 1);
+      return entry;
+    }
+    if (Array.isArray(entry?.item)) {
+      const child = extractRequest(entry.item, predicate, exclude);
+      if (child) return child;
+    }
+  }
+  return null;
 }
 
 function ensureRequestEvent(item, listen, scriptText, marker) {
@@ -475,6 +663,83 @@ function applyMockResponseHeaders(collection) {
   });
 }
 
+function ensureEdgeCaseFolder(collection) {
+  collection.item = collection.item || [];
+  const EDGE_FOLDER_NAME = "99 - Edge Cases (Optional)";
+  let folder = findFolder(collection, EDGE_FOLDER_NAME);
+  if (folder) {
+    collection.item = collection.item.filter((entry) => entry !== folder);
+  } else {
+    folder = { name: EDGE_FOLDER_NAME, item: [] };
+  }
+  folder.item = folder.item || [];
+
+  const specs = [
+    {
+      name: "GET Status - Unknown refundId (404)",
+      method: "GET",
+      url: "{{base_url}}/refunds/rfnd_does_not_exist/status",
+      headers: [],
+      marker: EDGE_CASE_MARKERS.STATUS_404,
+      expected: 404,
+      testName: "Edge status 404",
+    },
+    {
+      name: "POST Create Refund - Bad Request (400)",
+      method: "POST",
+      url: "{{base_url}}/refunds",
+      headers: [{ key: "x-demo-bad-request", value: "1" }],
+      marker: EDGE_CASE_MARKERS.BAD_REQUEST_400,
+      expected: 400,
+      testName: "Edge bad request 400",
+    },
+    {
+      name: "GET Health - Rate Limited (429)",
+      method: "GET",
+      url: "{{base_url}}/health",
+      headers: [{ key: "x-demo-rate-limit", value: "1" }],
+      marker: EDGE_CASE_MARKERS.RATE_LIMIT_429,
+      expected: 429,
+      testName: "Edge rate limit 429",
+    },
+  ];
+
+  const orderedItems = [];
+  for (const spec of specs) {
+    let requestItem = folder.item.find((entry) => entry?.request && entry.name === spec.name);
+    if (!requestItem) {
+      requestItem = {
+        name: spec.name,
+        request: { method: spec.method, header: [], url: spec.url },
+      };
+      folder.item.push(requestItem);
+    }
+    requestItem.name = spec.name;
+    requestItem.request = requestItem.request || {};
+    requestItem.request.method = spec.method;
+    setUrlString(requestItem.request, spec.url);
+    if (Array.isArray(spec.headers)) {
+      for (const header of spec.headers) {
+        ensureHeader(requestItem.request, header.key, header.value);
+      }
+    }
+    ensureEdgeCaseTest(requestItem, spec.expected, spec.marker, spec.testName);
+    orderedItems.push(requestItem);
+  }
+
+  const remaining = folder.item.filter((entry) => !orderedItems.includes(entry));
+  folder.item = [...orderedItems, ...remaining];
+  collection.item.push(folder);
+}
+
+function ensureEdgeCaseTest(item, expectedStatus, marker, testName) {
+  const script = `
+// ${marker}
+pm.test("${testName}", () => pm.response.code === ${expectedStatus});
+`.trim();
+  ensureRequestEvent(item, "test", script, marker);
+}
+
 function buildJwtVariant() {
   const doc = normalizeBaseUrlTokens(JSON.parse(JSON.stringify(rawDoc)));
   const col = doc.collection;
@@ -483,8 +748,14 @@ function buildJwtVariant() {
   ensureJwtEvents(col);
   addAuthFolder(col);
   applyRefundLinking(col, { strictCreateTests: false });
+  ensureHealthFolder(col);
+  ensureRefundFlowFolder(col);
+  reorderTopFolders(col, ["00 - Auth", "01 - Health", "02 - Refund Flow"]);
+  ensureAuthGuards(col);
+  ensureHealthGuards(col);
   prioritizeSuccessResponses(col);
   applyMockResponseHeaders(col);
+  ensureEdgeCaseFolder(col);
   const fullName = `Payments / ${SERVICE_KEY} (JWT Mock)`;
   setName(col, fullName);
   return { doc, fullName };
@@ -496,7 +767,12 @@ function buildOauthVariant() {
   removeConflictingCollectionVars(col);
   addOauthSetupFolder(col);
   applyRefundLinking(col, { strictCreateTests: true });
+  ensureHealthFolder(col);
+  ensureRefundFlowFolder(col);
+  reorderTopFolders(col, ["00 - OAuth2 Setup", "01 - Health", "02 - Refund Flow"]);
+  ensureHealthGuards(col);
   prioritizeSuccessResponses(col);
+  ensureEdgeCaseFolder(col);
   const fullName = `Payments / ${SERVICE_KEY} (OAuth2 Ready)`;
   setName(col, fullName);
   return { doc, fullName };
@@ -510,3 +786,26 @@ console.log("✅ Wrote", outJwt, "name:", jwtVariant.fullName);
 const oauthVariant = buildOauthVariant();
 fs.writeFileSync(outOauth, JSON.stringify(oauthVariant.doc, null, 2));
 console.log("✅ Wrote", outOauth, "name:", oauthVariant.fullName);
+function findRequestByName(items, targetName) {
+  if (!Array.isArray(items)) return null;
+  for (const item of items) {
+    if (item?.request && item.name === targetName) return item;
+    if (Array.isArray(item?.item)) {
+      const nested = findRequestByName(item.item, targetName);
+      if (nested) return nested;
+    }
+  }
+  return null;
+}
+
+function ensureAuthGuards(collection) {
+  const authItem = findRequestByName(collection.item, "POST Get Token (Mocked)");
+  if (!authItem) return;
+  ensureRequestEvent(authItem, "test", AUTH_GUARD_SCRIPT, AUTH_GUARD_MARKER);
+}
+
+function ensureHealthGuards(collection) {
+  const healthItem = findRequestByName(collection.item, "GET Health");
+  if (!healthItem) return;
+  ensureRequestEvent(healthItem, "test", HEALTH_GUARD_SCRIPT, HEALTH_GUARD_MARKER);
+}

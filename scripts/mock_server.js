@@ -1,11 +1,15 @@
 import http from 'node:http';
 
 const MOCK_PORT = Number(process.env.MOCK_PORT) || 4010;
+const RATE_LIMIT_HEADER = 'x-demo-rate-limit';
+const BAD_REQUEST_HEADER = 'x-demo-bad-request';
+const HAPPY_PATH_REFUND_ID = 'rfnd_demo123';
+
 const ROUTES = [
   {
     method: 'POST',
-    match: (pathname) => pathname === '/auth/token',
-    handler: (res) => {
+    match: (pathname) => (pathname === '/auth/token' ? {} : null),
+    handler: (_req, res) => {
       sendJson(res, 200, {
         access_token: 'demo.jwt.token',
         token_type: 'Bearer',
@@ -15,36 +19,49 @@ const ROUTES = [
   },
   {
     method: 'GET',
-    match: (pathname) => pathname === '/health',
-    handler: (res) => {
+    match: (pathname) => (pathname === '/health' ? {} : null),
+    handler: (_req, res) => {
       sendJson(res, 200, { status: 'ok' });
     },
   },
   {
     method: 'POST',
-    match: (pathname) => pathname === '/refunds',
-    handler: (res) => {
+    match: (pathname) => (pathname === '/refunds' ? {} : null),
+    handler: (req, res) => {
+      if (headerEquals(req, BAD_REQUEST_HEADER, '1')) {
+        sendJson(res, 400, {
+          error: 'bad_request',
+          message: 'Invalid refund request (demo)',
+        });
+        return;
+      }
       sendJson(res, 201, refundResponse());
     },
   },
   {
     method: 'GET',
-    match: (pathname) => pathname === '/refunds',
-    handler: (res) => {
+    match: (pathname) => (pathname === '/refunds' ? {} : null),
+    handler: (_req, res) => {
       sendJson(res, 200, { refunds: [refundResponse()] });
     },
   },
   {
     method: 'GET',
-    match: (pathname) => refundPath(pathname)?.type === 'details',
-    handler: (res, match) => {
+    match: (pathname) => refundPath(pathname, 'details'),
+    handler: (req, res, match) => {
+      if (!isHappyPathRefund(match)) {
+        return sendRefundNotFound(res);
+      }
       sendJson(res, 200, refundResponse(match.refundId));
     },
   },
   {
     method: 'GET',
-    match: (pathname) => refundPath(pathname)?.type === 'status',
-    handler: (res, match) => {
+    match: (pathname) => refundPath(pathname, 'status'),
+    handler: (req, res, match) => {
+      if (!isHappyPathRefund(match)) {
+        return sendRefundNotFound(res);
+      }
       sendJson(res, 200, {
         refundId: match.refundId,
         status: 'PENDING',
@@ -53,8 +70,11 @@ const ROUTES = [
   },
   {
     method: 'POST',
-    match: (pathname) => refundPath(pathname)?.type === 'cancel',
-    handler: (res, match) => {
+    match: (pathname) => refundPath(pathname, 'cancel'),
+    handler: (req, res, match) => {
+      if (!isHappyPathRefund(match)) {
+        return sendRefundNotFound(res);
+      }
       sendJson(res, 200, {
         refundId: match.refundId,
         status: 'CANCELLED',
@@ -63,20 +83,27 @@ const ROUTES = [
   },
 ];
 
-function refundPath(pathname) {
+function headerEquals(req, name, expected) {
+  return (req.headers[name] || '').toString() === expected;
+}
+
+function refundPath(pathname, typeFilter) {
   const base = '/refunds/';
   if (!pathname.startsWith(base)) return null;
   const parts = pathname.slice(base.length).split('/');
   const refundId = parts[0];
   if (!refundId) return null;
   if (parts.length === 1) {
-    return { type: 'details', refundId };
+    const data = { type: 'details', refundId };
+    return !typeFilter || typeFilter === data.type ? data : null;
   }
   if (parts[1] === 'status') {
-    return { type: 'status', refundId };
+    const data = { type: 'status', refundId };
+    return !typeFilter || typeFilter === data.type ? data : null;
   }
   if (parts[1] === 'cancel' && parts.length === 2) {
-    return { type: 'cancel', refundId };
+    const data = { type: 'cancel', refundId };
+    return !typeFilter || typeFilter === data.type ? data : null;
   }
   return null;
 }
@@ -105,15 +132,41 @@ function sendJson(res, statusCode, payload) {
   res.end(body);
 }
 
+function sendRefundNotFound(res) {
+  sendJson(res, 404, {
+    error: 'not_found',
+    message: 'Refund not found (demo)',
+  });
+}
+
+function isHappyPathRefund(match) {
+  return match?.refundId === HAPPY_PATH_REFUND_ID;
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
-  const route = ROUTES.find(
-    (entry) => entry.method === req.method && entry.match(url.pathname)
-  );
+  if (headerEquals(req, RATE_LIMIT_HEADER, '1')) {
+    sendJson(res, 429, {
+      error: 'rate_limited',
+      message: 'Rate limit exceeded (demo)',
+    });
+    return;
+  }
 
-  if (route) {
-    const matchData = route.match(url.pathname);
-    route.handler(res, matchData);
+  let matchedRoute = null;
+  let matchData = null;
+  for (const route of ROUTES) {
+    if (route.method !== req.method) continue;
+    const data = route.match(url.pathname);
+    if (data) {
+      matchedRoute = route;
+      matchData = data;
+      break;
+    }
+  }
+
+  if (matchedRoute) {
+    matchedRoute.handler(req, res, matchData);
     return;
   }
 
