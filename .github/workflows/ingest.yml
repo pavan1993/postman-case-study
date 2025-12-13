@@ -82,6 +82,11 @@ jobs:
           JUNIT_PATH="artifacts/newman-junit.xml"
           TESTS="0"
           FAILURES="0"
+          WORKFLOW="${{ github.workflow }}"
+          GIT_SHA="${{ github.sha }}"
+          REF="${{ github.ref }}"
+          RUN_NUMBER="${{ github.run_number }}"
+          JOB_STATUS="${{ job.status }}"
           if [ -f "$JUNIT_PATH" ]; then
             LINE=$(grep -m1 -o 'tests="[^"]*" failures="[^"]*"' "$JUNIT_PATH" || true)
             TESTS=$(echo "$LINE" | sed -n 's/.*tests="\([^"]*\)".*/\1/p')
@@ -89,14 +94,14 @@ jobs:
             TESTS=${TESTS:-0}
             FAILURES=${FAILURES:-0}
           fi
-          cat <<'EOF' > artifacts/summary.md
+          cat <<EOF > artifacts/summary.md
 ### Run Summary
 
-- Workflow: ${{ github.workflow }}
-- Git SHA: ${{ github.sha }}
-- Ref: ${{ github.ref }}
-- Run number: ${{ github.run_number }}
-- Status: ${{ job.status }}
+- Workflow: ${WORKFLOW}
+- Git SHA: ${GIT_SHA}
+- Ref: ${REF}
+- Run number: ${RUN_NUMBER}
+- Status: ${JOB_STATUS}
 - Newman JUnit: ${JUNIT_PATH} (exists: $( [ -f "$JUNIT_PATH" ] && echo "yes" || echo "no" ))
 - Tests: ${TESTS}
 - Failures: ${FAILURES}
