@@ -102,6 +102,13 @@ function ensureEvents(collection) {
   }
 }
 
+function enforceJwtAuth(collection) {
+  collection.auth = {
+    type: "bearer",
+    bearer: [{ key: "token", value: "{{access_token}}", type: "string" }],
+  };
+}
+
 function addAuthFolder(collection) {
   collection.item = collection.item || [];
   if (collection.item.some((it) => it.name === "00 - Auth")) return;
@@ -144,6 +151,7 @@ function buildVariant(variantName) {
 
   // Force env-var usage only
   removeConflictingCollectionVars(col);
+  enforceJwtAuth(col);
 
   // Add auth + scripts (both variants get them; real backend can later swap token endpoint)
   ensureEvents(col);
