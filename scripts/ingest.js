@@ -20,7 +20,19 @@ function headers() {
   };
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let lastApiCall = 0;
+const MIN_INTERVAL_MS = 1100;
+
+async function throttle() {
+  const now = Date.now();
+  const wait = MIN_INTERVAL_MS - (now - lastApiCall);
+  if (wait > 0) await sleep(wait);
+  lastApiCall = Date.now();
+}
+
 async function post(url, body) {
+  await throttle();
   const res = await fetch(url, {
     method: "POST",
     headers: headers(),
@@ -34,6 +46,7 @@ async function post(url, body) {
 }
 
 async function get(url) {
+  await throttle();
   const res = await fetch(url, { method: "GET", headers: headers() });
   const text = await res.text();
   let json;
@@ -48,8 +61,6 @@ function toAbsoluteUrl(maybeUrl) {
   if (maybeUrl.startsWith("/")) return `${BASE}${maybeUrl}`;
   return `${BASE}/${maybeUrl}`;
 }
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function main() {
   const yaml = fs.readFileSync(YAML_PATH, "utf8");

@@ -1,4 +1,5 @@
 import fs from "fs";
+import crypto from "crypto";
 import fetch from "node-fetch";
 
 const API_KEY = process.env.POSTMAN_API_KEY;
@@ -15,10 +16,12 @@ if (!API_KEY || !WORKSPACE_ID || !COLLECTION_FILE || !COLLECTION_NAME) {
 
 const BASE = "https://api.getpostman.com";
 
-// Retry config
+// Retry config (keep modest so we do not hammer the API)
 const RETRY_STATUSES = new Set([500, 502, 503, 504, 429]);
-const MAX_RETRIES = 6; // total attempts = 1 + retries
-const BASE_DELAY_MS = 800;
+const MAX_RETRIES = 4; // total attempts = 1 + retries
+const BASE_DELAY_MS = 1000;
+const MIN_INTERVAL_MS = 1100;
+let lastApiCall = 0;
 
 function headers() {
   return {
@@ -30,6 +33,13 @@ function headers() {
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+async function throttle() {
+  const now = Date.now();
+  const wait = MIN_INTERVAL_MS - (now - lastApiCall);
+  if (wait > 0) await sleep(wait);
+  lastApiCall = Date.now();
 }
 
 function isRateLimited(status, responseBody) {
@@ -54,6 +64,7 @@ function rateLimitDelay(headers) {
 }
 
 async function http(method, url, body, attempt = 1) {
+  await throttle();
   const res = await fetch(url, {
     method,
     headers: headers(),
@@ -80,7 +91,7 @@ async function http(method, url, body, attempt = 1) {
       if (rateLimited) {
         const resetDelay = rateLimitDelay(res.headers);
         if (resetDelay) {
-          delay = Math.max(delay * 2, resetDelay);
+          delay = Math.max(delay, resetDelay);
         } else {
           delay *= 2;
         }
@@ -89,12 +100,10 @@ async function http(method, url, body, attempt = 1) {
       console.warn(
         `⚠️ ${method} ${url} failed with ${res.status}. Retrying in ${delay}ms (attempt ${attempt}/${MAX_RETRIES})`
       );
-      // Small jitter to avoid thundering herd
       await sleep(delay + Math.floor(Math.random() * 250));
       return http(method, url, body, attempt + 1);
     }
 
-    // Non-retryable or exhausted retries
     const err = new Error(`${method} ${url} failed: ${res.status}\n${text}`);
     err.status = res.status;
     err.response = json;
@@ -131,42 +140,78 @@ function approxBytes(obj) {
   return Buffer.byteLength(JSON.stringify(obj), "utf8");
 }
 
+function canonicalize(collection) {
+  if (!collection) return null;
+  const clone = JSON.parse(JSON.stringify(collection));
+
+  if (clone.info) {
+    clone.info.name = COLLECTION_NAME;
+    delete clone.info._postman_id;
+    delete clone.info.postman_id;
+    delete clone.info.id;
+    delete clone.info.uid;
+    delete clone.info.schema;
+  }
+
+  return clone;
+}
+
+function hashCollection(collection) {
+  if (!collection) return null;
+  return crypto.createHash("sha256").update(JSON.stringify(collection)).digest("hex");
+}
+
 async function main() {
   const payload = JSON.parse(fs.readFileSync(COLLECTION_FILE, "utf8"));
 
-  // Defensive: enforce the collection name we intend
   if (payload?.collection?.info?.name) {
     payload.collection.info.name = COLLECTION_NAME;
   }
 
-  // Sanity check payload size (helps diagnose deterministic 500s)
   const bytes = approxBytes(payload);
   console.log(`Payload size: ${Math.round(bytes / 1024)} KB (${bytes} bytes)`);
 
+  const desiredCanonical = canonicalize(payload.collection);
+  const desiredHash = hashCollection(desiredCanonical);
+
   const existingUid = await findUidByName(COLLECTION_NAME);
 
-  if (existingUid) {
-    console.log("Found existing collection:", COLLECTION_NAME, "uid:", existingUid);
-
-    try {
-      const current = await fetchCollection(existingUid);
-      const currentInfo = current?.collection?.info || {};
-      if (payload?.collection?.info) {
-        payload.collection.info._postman_id = currentInfo._postman_id || existingUid;
-        payload.collection.info.id = currentInfo.id || currentInfo._postman_id || existingUid;
-      }
-    } catch (err) {
-      console.warn("⚠️ Failed to fetch existing collection details; proceeding without merging ids.", err?.message || err);
-    }
-
-    console.log("Updating collection:", COLLECTION_NAME, "uid:", existingUid);
-    await update(existingUid, payload);
-    console.log("✅ Updated");
-  } else {
+  if (!existingUid) {
     console.log("Creating collection:", COLLECTION_NAME);
     const out = await createInWorkspace(payload);
     console.log("✅ Created uid:", out?.collection?.uid);
+    return;
   }
+
+  console.log("Found existing collection:", COLLECTION_NAME, "uid:", existingUid);
+  let existingCollection = null;
+
+  try {
+    const current = await fetchCollection(existingUid);
+    existingCollection = current?.collection;
+  } catch (err) {
+    console.warn("⚠️ Failed to fetch existing collection; continuing without change check.", err?.message || err);
+  }
+
+  if (existingCollection) {
+    const existingCanonical = canonicalize(existingCollection);
+    const existingHash = hashCollection(existingCanonical);
+
+    if (existingHash && desiredHash && existingHash === desiredHash) {
+      console.log("No changes detected; skipping update to avoid consuming rate limit.");
+      return;
+    }
+
+    if (payload?.collection?.info) {
+      const info = existingCollection.info || {};
+      payload.collection.info._postman_id = info._postman_id || existingUid;
+      payload.collection.info.id = info.id || info._postman_id || existingUid;
+    }
+  }
+
+  console.log("Updating collection:", COLLECTION_NAME, "uid:", existingUid);
+  await update(existingUid, payload);
+  console.log("✅ Updated");
 }
 
 main().catch((e) => {
