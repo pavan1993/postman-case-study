@@ -1,19 +1,20 @@
 # Configuration / Environment Setup
-1. `git clone https://github.com/pavan1993/postman-case-study.git` (or pull latest) and confirm access to the target domain workspace in Postman.
-2. Populate repo secrets/vars:
+1. Prereqs: create (or identify) the domain-owned Postman workspace, generate a Postman API key with editor scope, and record the workspace ID plus the API’s `service_key` slug you plan to onboard.
+2. `git clone https://github.com/pavan1993/postman-case-study.git` (or pull latest) and confirm you can target the chosen workspace.
+3. Populate repo secrets/vars:
    - `POSTMAN_API_KEY` (workspace editor scope),
    - `POSTMAN_WORKSPACE_ID` (domain workspace receiving the assets),
    - `POSTMAN_SERVICE_KEY` (stable slug per API),
    - optional `vars.POSTMAN_DEBUG=true` for verbose logging.
-3. Trigger the **Ingest Refund API into Postman (Mock + Real Canonicals)** workflow via `workflow_dispatch` (manual run is the cleanest control point). *Note: pushing to `main` with changes to `payment-refund-api-openapi.yaml`, `scripts/**`, or `.github/workflows/ingest.yml` also triggers the same workflow.*
-4. Each run performs spec ingestion, collection patching, mock validation, workspace upserts, and cleanup:
+4. Trigger the **Ingest Refund API into Postman (Mock + Real Canonicals)** workflow via `workflow_dispatch` (manual run is the cleanest control point). *Note: pushing to `main` with changes to `payment-refund-api-openapi.yaml`, `scripts/**`, or `.github/workflows/ingest.yml` also triggers the same workflow.*
+5. Each run performs spec ingestion, collection patching, mock validation, workspace upserts, and cleanup:
    - `node scripts/ingest.js` writes `artifacts/collection.generated.json` (transient; ignore outside CI).
    - `node scripts/patch_collection.js` emits `artifacts/collection.jwt_mock.json` and `artifacts/collection.oauth2_ready.json` (mirrors of the published collections).
    - `node scripts/mock_server.js`/`npx newman run ...` produce `artifacts/newman-junit.xml` for evidence.
    - `node scripts/upsert_collection.js` + `node scripts/upsert_envs.js` publish collections and Dev/QA/UAT/Prod environments, then `node scripts/delete_generated_collection.js` removes the intermediate collection.
    - `artifacts/summary.md` captures the run summary/ROI trace; contracts live in `docs/contracts.md` for quick reference.
-5. Confirm the Postman workspace shows both auth-mode collections and the governed environments; repeat the workflow per API (one API per run today) or per domain workspace as needed.
-6. Leave ongoing retention to the scheduled **Cleanup Postman Collections** workflow (`node scripts/cleanup_collections.js` with `RETAIN_LAST_N=5`), which keeps only the last five versions per collection.
+6. Confirm the Postman workspace shows both auth-mode collections and the governed environments; repeat the workflow per API (one API per run today) or per domain workspace as needed.
+7. Leave ongoing retention to the scheduled **Cleanup Postman Collections** workflow (`node scripts/cleanup_collections.js` with `RETAIN_LAST_N=5`), which keeps only the last five versions per collection.
 
 # Business Value (Problem and Outcome)
 - Engineers lose time during API discovery: confirming auth flows, endpoints, schemas, errors, and execution order.
