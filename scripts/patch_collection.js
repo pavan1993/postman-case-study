@@ -91,6 +91,11 @@ const MOCK_REFUND_ID_SCRIPT = `
 // ${MOCK_REFUND_ID_MARKER}
 pm.environment.set("refundId", "${MOCK_REFUND_ID}");
 `.trim();
+const MOCK_REFUND_ID_DEFAULT_MARKER = "__MOCK_REFUND_ID_DEFAULT__";
+const MOCK_REFUND_ID_DEFAULT_SCRIPT = `
+// ${MOCK_REFUND_ID_DEFAULT_MARKER}
+pm.environment.set("refundId", "${MOCK_REFUND_ID}");
+`.trim();
 
 const EDGE_CASE_MARKERS = {
   STATUS_404: "__EDGE_STATUS_404__",
@@ -257,11 +262,16 @@ function removeConflictingCollectionVars(collection) {
 function ensureJwtEvents(collection) {
   collection.event = collection.event || [];
 
-  if (!collection.event.some((e) => e.listen === "prerequest")) {
-    collection.event.push({
+  let preRequest = collection.event.find((e) => e.listen === "prerequest");
+  if (!preRequest) {
+    preRequest = {
       listen: "prerequest",
       script: { type: "text/javascript", exec: PRE_REQUEST.split("\n") },
-    });
+    };
+    collection.event.push(preRequest);
+  } else if (!preRequest.script?.exec?.join("\n").includes(PRE_REQUEST.trim())) {
+    preRequest.script = preRequest.script || { type: "text/javascript", exec: [] };
+    preRequest.script.exec = [...preRequest.script.exec, ...PRE_REQUEST.split("\n")];
   }
 
   if (!collection.event.some((e) => e.listen === "test")) {
@@ -270,6 +280,25 @@ function ensureJwtEvents(collection) {
       script: { type: "text/javascript", exec: COLLECTION_TEST.split("\n") },
     });
   }
+}
+
+function ensureMockRefundDefaults(collection) {
+  collection.event = collection.event || [];
+  let preRequest = collection.event.find((e) => e.listen === "prerequest");
+  if (!preRequest) {
+    preRequest = {
+      listen: "prerequest",
+      script: { type: "text/javascript", exec: MOCK_REFUND_ID_DEFAULT_SCRIPT.split("\n") },
+    };
+    collection.event.push(preRequest);
+    return;
+  }
+  const current = (preRequest.script?.exec || []).join("\n");
+  if (current.includes(MOCK_REFUND_ID_DEFAULT_MARKER)) return;
+  preRequest.script.exec = [
+    ...(preRequest.script?.exec || []),
+    ...MOCK_REFUND_ID_DEFAULT_SCRIPT.split("\n"),
+  ];
 }
 
 function enforceJwtAuth(collection) {
@@ -759,6 +788,7 @@ function buildJwtVariant() {
   removeConflictingCollectionVars(col);
   enforceJwtAuth(col);
   ensureJwtEvents(col);
+  ensureMockRefundDefaults(col);
   addAuthFolder(col);
   applyRefundLinking(col, { strictCreateTests: false, injectMockRefundOverride: true });
   ensureHealthFolder(col);
