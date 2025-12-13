@@ -22,7 +22,7 @@ function headers() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let lastApiCall = 0;
-const MIN_INTERVAL_MS = 1100;
+const MIN_INTERVAL_MS = 2000;
 
 async function throttle() {
   const now = Date.now();

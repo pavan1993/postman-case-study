@@ -20,7 +20,7 @@ const BASE = "https://api.getpostman.com";
 const RETRY_STATUSES = new Set([500, 502, 503, 504, 429]);
 const MAX_RETRIES = 4; // total attempts = 1 + retries
 const BASE_DELAY_MS = 1000;
-const MIN_INTERVAL_MS = 1100;
+const MIN_INTERVAL_MS = 2000;
 let lastApiCall = 0;
 
 function headers() {
