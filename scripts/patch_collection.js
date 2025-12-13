@@ -237,8 +237,17 @@ try {
 } catch (err) {
   statusJson = {};
 }
+const statusValue = statusJson?.status;
+if (statusValue) {
+  pm.environment.set("refundStatus", String(statusValue));
+}
 pm.test("refund status present", function () {
-  pm.expect(statusJson.status, "status missing in response").to.exist;
+  const stored = pm.environment.get("refundStatus");
+  pm.expect(stored, "refundStatus missing in environment").to.be.a("string").and.not.empty;
+});
+pm.test("refund status value", function () {
+  const stored = pm.environment.get("refundStatus");
+  pm.expect(["PENDING", "COMPLETED", "CANCELLED"]).to.include(stored);
 });
 `.trim();
 
