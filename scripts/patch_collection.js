@@ -11,8 +11,10 @@ const rawDoc = JSON.parse(fs.readFileSync(inPath, "utf8"));
 const PRE_REQUEST = `
 async function ensureAuth() {
   const now = Math.floor(Date.now() / 1000);
-  const expires = Number(pm.environment.get("token_exp") || 0);
+  const expRaw = pm.environment.get("token_exp");
+  const expires = Number.isFinite(Number(expRaw)) ? Number(expRaw) : Infinity;
   let token = pm.environment.get("access_token");
+  let tokenType = pm.environment.get("token_type") || "Bearer";
   const needsRefresh = !token || now >= (expires - 30);
 
   if (needsRefresh) {
@@ -30,18 +32,25 @@ async function ensureAuth() {
           if (err) return reject(err);
           if (!res) return reject(new Error("Empty auth response"));
           const json = res.json();
-          if (!json?.access_token) return reject(new Error("Auth response missing access_token"));
+          if (!json?.access_token) {
+            logFn("Auth response payload:", JSON.stringify(json));
+            return reject(new Error("Auth response missing access_token"));
+          }
+          const type = json.token_type || "Bearer";
           pm.environment.set("access_token", json.access_token);
+          pm.environment.set("token_type", type);
           pm.environment.set("token_exp", String(now + Number(json.expires_in || 300)));
-          resolve(json.access_token);
+          resolve({ token: json.access_token, tokenType: type });
         }
       );
     });
 
-    token = response;
+    token = response.token;
+    tokenType = response.tokenType;
   }
 
-  pm.request.headers.upsert({ key: "Authorization", value: \`Bearer \${token}\` });
+  const headerVal = \`\${tokenType} \${token}\`.trim();
+  pm.request.headers.upsert({ key: "Authorization", value: headerVal });
   pm.variables.set("last_attached_auth_header", pm.request.headers.get("Authorization") || "");
 }
 
