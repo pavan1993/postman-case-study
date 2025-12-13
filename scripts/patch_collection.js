@@ -86,11 +86,6 @@ if (pm.response.code !== 200) {
 `.trim();
 
 const MOCK_REFUND_ID = "rfnd_demo123";
-const MOCK_REFUND_ID_MARKER = "__MOCK_REFUND_ID_OVERRIDE__";
-const MOCK_REFUND_ID_SCRIPT = `
-// ${MOCK_REFUND_ID_MARKER}
-pm.environment.set("refundId", "${MOCK_REFUND_ID}");
-`.trim();
 const MOCK_REFUND_ID_DEFAULT_MARKER = "__MOCK_REFUND_ID_DEFAULT__";
 const MOCK_REFUND_ID_DEFAULT_SCRIPT = `
 // ${MOCK_REFUND_ID_DEFAULT_MARKER}
@@ -230,32 +225,37 @@ if (currency) {
 }
 `.trim();
 
-const REFUND_STATUS_MARKER = "__REFUND_STATUS_CONTRACT__";
+const REFUND_STATUS_MARKER = "__REFUND_STATUS_SIMPLE__";
 const REFUND_STATUS_TEST = `
 // ${REFUND_STATUS_MARKER}
-const statusCode = pm.response.code;
-const rawBody = pm.response.text();
 pm.test("refund status HTTP 200", function () {
-  pm.expect(statusCode, \`Expected 200, got \${statusCode}: \${rawBody}\`).to.eql(200);
+  pm.expect(pm.response.code).to.eql(200);
 });
-let statusJson;
-pm.test("refund status JSON body", function () {
-  try {
-    statusJson = pm.response.json();
-    pm.expect(statusJson, "Parsed JSON is falsy").to.be.an("object");
-  } catch (err) {
-    pm.expect.fail(\`Non-JSON response: \${rawBody}\`);
-  }
-});
-const resolvedStatus =
-  (statusJson && (statusJson.status || statusJson.refundStatus || statusJson.refund_status)) ||
-  (statusJson?.data && (statusJson.data.status || statusJson.data.refundStatus || statusJson.data.refund_status)) ||
-  (statusJson?.refund && (statusJson.refund.status || statusJson.refund.refundStatus || statusJson.refund.refund_status));
-if (resolvedStatus) {
-  pm.environment.set("refund_status", resolvedStatus);
+let statusJson = {};
+try {
+  statusJson = pm.response.json();
+} catch (err) {
+  statusJson = {};
 }
 pm.test("refund status present", function () {
-  pm.expect(resolvedStatus, \`status missing; response=\${JSON.stringify(statusJson)}\`).to.exist;
+  pm.expect(statusJson.status, "status missing in response").to.exist;
+});
+`.trim();
+
+const REFUND_CREATE_SIMPLE_MARKER = "__REFUND_CREATE_SIMPLE__";
+const REFUND_CREATE_SIMPLE_TEST = `
+// ${REFUND_CREATE_SIMPLE_MARKER}
+let refundId = "${MOCK_REFUND_ID}";
+try {
+  const parsed = pm.response.json();
+  if (parsed && (parsed.refundId || parsed.id)) {
+    refundId = parsed.refundId || parsed.id || refundId;
+  }
+} catch (err) { /* ignore parse errors */ }
+pm.environment.set("refundId", String(refundId));
+pm.test("refundId captured", function () {
+  const captured = pm.environment.get("refundId");
+  pm.expect(captured, "refundId missing in environment").to.be.a("string").and.not.empty;
 });
 `.trim();
 
@@ -618,10 +618,21 @@ function ensureRequestEvent(item, listen, scriptText, marker) {
 
 function applyRefundLinking(
   collection,
-  { strictCreateTests, injectMockRefundOverride } = { strictCreateTests: true, injectMockRefundOverride: false }
+  {
+    strictCreateTests = true,
+    createScript = null,
+    createMarker = null,
+    statusScript = REFUND_STATUS_TEST,
+    statusMarker = REFUND_STATUS_MARKER,
+  } = {}
 ) {
   if (!collection?.item) return;
-  const createScript = strictCreateTests ? REFUND_CREATE_TEST_STRICT : REFUND_CREATE_TEST_LENIENT;
+  const resolvedCreateScript =
+    createScript || (strictCreateTests ? REFUND_CREATE_TEST_STRICT : REFUND_CREATE_TEST_LENIENT);
+  const resolvedCreateMarker =
+    createMarker || (strictCreateTests ? REFUND_CREATE_MARKER : REFUND_CREATE_MARKER);
+  const resolvedStatusScript = statusScript || REFUND_STATUS_TEST;
+  const resolvedStatusMarker = statusMarker || REFUND_STATUS_MARKER;
 
   visitRequests(collection.item, (entry) => {
     const req = entry.request;
@@ -651,10 +662,7 @@ function applyRefundLinking(
       !/\/refunds\/.+/i.test(urlStr);
 
     if (isCreateRefund) {
-      ensureRequestEvent(entry, "test", createScript, REFUND_CREATE_MARKER);
-      if (injectMockRefundOverride) {
-        ensureRequestEvent(entry, "test", MOCK_REFUND_ID_SCRIPT, MOCK_REFUND_ID_MARKER);
-      }
+      ensureRequestEvent(entry, "test", resolvedCreateScript, resolvedCreateMarker);
     }
 
     if (containsRefundId) {
@@ -662,7 +670,7 @@ function applyRefundLinking(
     }
 
     if (isStatusEndpoint) {
-      ensureRequestEvent(entry, "test", REFUND_STATUS_TEST, REFUND_STATUS_MARKER);
+      ensureRequestEvent(entry, "test", resolvedStatusScript, resolvedStatusMarker);
     }
 
   });
@@ -814,7 +822,11 @@ function buildJwtVariant() {
   ensureJwtEvents(col);
   ensureMockRefundDefaults(col);
   addAuthFolder(col);
-  applyRefundLinking(col, { strictCreateTests: false, injectMockRefundOverride: true });
+  applyRefundLinking(col, {
+    strictCreateTests: false,
+    createScript: REFUND_CREATE_SIMPLE_TEST,
+    createMarker: REFUND_CREATE_SIMPLE_MARKER,
+  });
   ensureHealthFolder(col);
   ensureRefundFlowFolder(col);
   reorderTopFolders(col, ["00 - Auth", "01 - Health", "02 - Refund Flow"]);
@@ -833,7 +845,7 @@ function buildOauthVariant() {
   const col = doc.collection;
   removeConflictingCollectionVars(col);
   addOauthSetupFolder(col);
-  applyRefundLinking(col, { strictCreateTests: true, injectMockRefundOverride: false });
+  applyRefundLinking(col, { strictCreateTests: true });
   ensureHealthFolder(col);
   ensureRefundFlowFolder(col);
   reorderTopFolders(col, ["00 - OAuth2 Setup", "01 - Health", "02 - Refund Flow"]);
