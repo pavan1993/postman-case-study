@@ -265,6 +265,18 @@ function visitRequests(items, cb) {
   }
 }
 
+function ensureHeader(request, key, value) {
+  if (!request) return;
+  request.header = Array.isArray(request.header) ? request.header : [];
+  const keyLower = key.toLowerCase();
+  const existing = request.header.find((h) => (h.key || "").toLowerCase() === keyLower);
+  if (existing) {
+    existing.value = value;
+  } else {
+    request.header.push({ key, value });
+  }
+}
+
 function getUrlString(url) {
   if (!url) return "";
   if (typeof url === "string") return url;
@@ -369,6 +381,48 @@ function prioritizeSuccessResponses(collection) {
   });
 }
 
+function firstSuccessResponseName(entry, preferred) {
+  if (!Array.isArray(entry.response)) return null;
+  let fallback = null;
+  for (const res of entry.response) {
+    const code = Number(res.code);
+    if (!Number.isFinite(code) || code < 200 || code >= 300) continue;
+    if (preferred && res.name === preferred) return res.name;
+    if (!fallback && res.name) fallback = res.name;
+  }
+  return fallback;
+}
+
+function applyMockResponseHeaders(collection) {
+  if (!collection?.item) return;
+  visitRequests(collection.item, (entry) => {
+    const req = entry.request;
+    if (!req) return;
+    const method = (req.method || "").toUpperCase();
+    const urlStr = getUrlString(req.url);
+    if (!urlStr) return;
+
+    let desiredCode = "200";
+    let desiredName = firstSuccessResponseName(entry, null);
+    const hasRefundPlaceholder = /\/refunds\/(:|\{|\{\{)/i.test(urlStr);
+
+    const isCreateRefund =
+      method === "POST" &&
+      /\/refunds(?:\b|$|[\?#])/i.test(urlStr) &&
+      !hasRefundPlaceholder;
+
+    if (isCreateRefund) {
+      desiredCode = "201";
+      desiredName = firstSuccessResponseName(entry, "success_full") || desiredName;
+    }
+
+    ensureHeader(req, "x-mock-response-code", desiredCode);
+    if (desiredName) {
+      ensureHeader(req, "x-mock-response-name", desiredName);
+    }
+  });
+}
+
 function buildJwtVariant() {
   const doc = normalizeBaseUrlTokens(JSON.parse(JSON.stringify(rawDoc)));
   const col = doc.collection;
@@ -378,6 +432,7 @@ function buildJwtVariant() {
   addAuthFolder(col);
   applyRefundLinking(col);
   prioritizeSuccessResponses(col);
+  applyMockResponseHeaders(col);
   const fullName = `Payments / ${SERVICE_KEY} (JWT Mock)`;
   setName(col, fullName);
   return { doc, fullName };
