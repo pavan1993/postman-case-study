@@ -360,6 +360,17 @@ function findFolder(collection, folderName) {
   return (collection.item || []).find((it) => it.name === folderName && Array.isArray(it.item));
 }
 
+function ensureFolder(collection, folderName) {
+  collection.item = collection.item || [];
+  let folder = findFolder(collection, folderName);
+  if (!folder) {
+    folder = { name: folderName, item: [] };
+    collection.item.push(folder);
+  }
+  folder.item = folder.item || [];
+  return folder;
+}
+
 function reorderTopFolders(collection, orderedNames) {
   if (!Array.isArray(collection.item)) return;
   const lookup = new Map();
@@ -375,12 +386,7 @@ function reorderTopFolders(collection, orderedNames) {
 
 function ensureHealthFolder(collection) {
   collection.item = collection.item || [];
-  let folder = findFolder(collection, "01 - Health");
-  if (!folder) {
-    folder = { name: "01 - Health", item: [] };
-    collection.item.push(folder);
-  }
-  folder.item = folder.item || [];
+  const folder = ensureFolder(collection, "01 - Health");
   const predicate = (entry) => requestMatches(entry, "GET", /\/health\b/i);
   let healthRequest = pluckRequest(folder.item, predicate);
   if (!healthRequest) {
@@ -403,12 +409,7 @@ function ensureHealthFolder(collection) {
 
 function ensureRefundFlowFolder(collection) {
   collection.item = collection.item || [];
-  let folder = findFolder(collection, "02 - Refund Flow");
-  if (!folder) {
-    folder = { name: "02 - Refund Flow", item: [] };
-    collection.item.push(folder);
-  }
-  folder.item = folder.item || [];
+  const folder = ensureFolder(collection, "02 - Refund Flow");
   const exclude = new Set([folder]);
   const specs = [
     {
@@ -475,6 +476,42 @@ function ensureRefundFlowFolder(collection) {
   }
   const existing = folder.item.filter((entry) => !ordered.includes(entry));
   folder.item = [...ordered, ...existing];
+}
+
+function ensureReportingFolder(collection) {
+  const folder = ensureFolder(collection, "03 - Reporting");
+  const predicate = (entry) =>
+    requestMatches(entry, "GET", /\/refunds(?:$|[?#])/i) &&
+    !/\/refunds\/\{\{refundId\}\}/i.test(getUrlString(entry.request?.url || ""));
+
+  // Remove duplicates inside folder
+  folder.item = folder.item || [];
+  const retained = folder.item.filter((entry) => !predicate(entry));
+
+  const exclude = new Set([folder]);
+  const extracted = [];
+  let match;
+  do {
+    match = extractRequest(collection.item, predicate, exclude);
+    if (match) extracted.push(match);
+  } while (match);
+
+  let canonical = folder.item.find(predicate);
+  if (!canonical && extracted.length > 0) {
+    canonical = extracted.shift();
+  }
+  if (!canonical) {
+    canonical = {
+      name: "GET List Refunds",
+      request: { method: "GET", header: [], url: "{{base_url}}/refunds" },
+    };
+  }
+  canonical.name = "GET List Refunds";
+  canonical.request = canonical.request || {};
+  canonical.request.method = "GET";
+  setUrlString(canonical.request, "{{base_url}}/refunds");
+
+  folder.item = [canonical, ...retained];
 }
 
 function addOauthSetupFolder(collection) {
@@ -737,6 +774,27 @@ function applyMockResponseHeaders(collection) {
   });
 }
 
+function hasRequest(items) {
+  if (!Array.isArray(items)) return false;
+  for (const entry of items) {
+    if (entry?.request) return true;
+    if (Array.isArray(entry?.item) && hasRequest(entry.item)) return true;
+  }
+  return false;
+}
+
+function removeEmptyTopFolders(collection) {
+  if (!Array.isArray(collection.item)) return;
+  const legacyNames = new Set(["Refunds", "Refund Flow"]);
+  collection.item = collection.item.filter((entry) => {
+    if (!entry?.item) return true;
+    const empty = !hasRequest(entry.item);
+    if (empty) return false;
+    if (legacyNames.has(entry.name)) return false;
+    return true;
+  });
+}
+
 function ensureEdgeCaseFolder(collection) {
   collection.item = collection.item || [];
   const EDGE_FOLDER_NAME = "99 - Edge Cases (Optional)";
@@ -829,12 +887,20 @@ function buildJwtVariant() {
   });
   ensureHealthFolder(col);
   ensureRefundFlowFolder(col);
-  reorderTopFolders(col, ["00 - Auth", "01 - Health", "02 - Refund Flow"]);
+  ensureReportingFolder(col);
+  reorderTopFolders(col, [
+    "00 - Auth",
+    "01 - Health",
+    "02 - Refund Flow",
+    "03 - Reporting",
+    "99 - Edge Cases (Optional)",
+  ]);
   ensureAuthGuards(col);
   ensureHealthGuards(col);
   prioritizeSuccessResponses(col);
   applyMockResponseHeaders(col);
   ensureEdgeCaseFolder(col);
+  removeEmptyTopFolders(col);
   const fullName = `Payments / ${SERVICE_KEY} (JWT Mock)`;
   setName(col, fullName);
   return { doc, fullName };
@@ -848,10 +914,18 @@ function buildOauthVariant() {
   applyRefundLinking(col, { strictCreateTests: true });
   ensureHealthFolder(col);
   ensureRefundFlowFolder(col);
-  reorderTopFolders(col, ["00 - OAuth2 Setup", "01 - Health", "02 - Refund Flow"]);
+  ensureReportingFolder(col);
+  reorderTopFolders(col, [
+    "00 - OAuth2 Setup",
+    "01 - Health",
+    "02 - Refund Flow",
+    "03 - Reporting",
+    "99 - Edge Cases (Optional)",
+  ]);
   ensureHealthGuards(col);
   prioritizeSuccessResponses(col);
   ensureEdgeCaseFolder(col);
+  removeEmptyTopFolders(col);
   const fullName = `Payments / ${SERVICE_KEY} (OAuth2 Ready)`;
   setName(col, fullName);
   return { doc, fullName };
