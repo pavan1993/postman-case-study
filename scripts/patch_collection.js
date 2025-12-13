@@ -16,7 +16,8 @@ async function ensureAuth() {
   const needsRefresh = !token || now >= (expires - 30);
 
   if (needsRefresh) {
-    pm.console.log("Fetching new access token…");
+    const logFn = pm.console && pm.console.log ? pm.console.log : console.log;
+    logFn("Fetching new access token…");
     const response = await new Promise((resolve, reject) => {
       pm.sendRequest(
         {
