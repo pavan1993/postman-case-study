@@ -350,6 +350,25 @@ function applyRefundLinking(collection) {
   });
 }
 
+function prioritizeSuccessResponses(collection) {
+  if (!collection?.item) return;
+  visitRequests(collection.item, (entry) => {
+    if (!Array.isArray(entry.response) || entry.response.length < 2) return;
+    const success = [];
+    const rest = [];
+    for (const res of entry.response) {
+      const code = Number(res.code);
+      if (Number.isFinite(code) && code >= 200 && code < 300) {
+        success.push(res);
+      } else {
+        rest.push(res);
+      }
+    }
+    if (success.length === 0) return;
+    entry.response = [...success, ...rest];
+  });
+}
+
 function buildJwtVariant() {
   const doc = normalizeBaseUrlTokens(JSON.parse(JSON.stringify(rawDoc)));
   const col = doc.collection;
@@ -358,6 +377,7 @@ function buildJwtVariant() {
   ensureJwtEvents(col);
   addAuthFolder(col);
   applyRefundLinking(col);
+  prioritizeSuccessResponses(col);
   const fullName = `Payments / ${SERVICE_KEY} (JWT Mock)`;
   setName(col, fullName);
   return { doc, fullName };
@@ -369,6 +389,7 @@ function buildOauthVariant() {
   removeConflictingCollectionVars(col);
   addOauthSetupFolder(col);
   applyRefundLinking(col);
+  prioritizeSuccessResponses(col);
   const fullName = `Payments / ${SERVICE_KEY} (OAuth2 Ready)`;
   setName(col, fullName);
   return { doc, fullName };
