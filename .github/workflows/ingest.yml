@@ -89,7 +89,7 @@ jobs:
             TESTS=${TESTS:-0}
             FAILURES=${FAILURES:-0}
           fi
-          cat <<EOF > artifacts/summary.md
+          cat <<'EOF' > artifacts/summary.md
 ### Run Summary
 
 - Workflow: ${{ github.workflow }}
