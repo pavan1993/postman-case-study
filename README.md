@@ -127,7 +127,7 @@ This excludes:
 - MTTR reductions
 - Defect and regression avoidance
 
-####Justification for “seconds to first call”
+#### Justification for “seconds to first call”:
 The “seconds” claim reflects the time required to open a published Postman collection, select the JWT Mock environment, and execute a pre-configured request that already includes authentication, base URLs, headers, and execution order.
 
 This does not assume zero learning time. It measures the first successful API response once discovery artifacts exist—removing manual steps such as reading docs, finding auth flows, constructing requests, or guessing execution order.
