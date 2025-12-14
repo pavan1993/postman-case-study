@@ -1,5 +1,4 @@
 import fs from "fs";
-import crypto from "crypto";
 import fetch from "node-fetch";
 
 const API_KEY = process.env.POSTMAN_API_KEY;
@@ -14,7 +13,6 @@ if (!API_KEY || !WORKSPACE_ID || !COLLECTION_FILE || !COLLECTION_NAME) {
 
 const BASE = "https://api.getpostman.com";
 const PRE_WRITE_DELAY_MS = 1500;
-const PUT_RETRY_DELAY_MS = 2000;
 
 function headers() {
   return {
@@ -46,20 +44,6 @@ async function request(method, url, body) {
   return json;
 }
 
-async function listCollections() {
-  const res = await request("GET", `${BASE}/collections?workspace=${WORKSPACE_ID}`);
-  return res?.collections || [];
-}
-
-async function fetchCollection(uid) {
-  return request("GET", `${BASE}/collections/${uid}`);
-}
-
-async function putCollection(uid, payload) {
-  logPayloadSize("PUT");
-  return request("PUT", `${BASE}/collections/${uid}`, payload);
-}
-
 async function postCollection(payload) {
   logPayloadSize("POST");
   return request("POST", `${BASE}/collections?workspace=${WORKSPACE_ID}`, payload);
@@ -72,16 +56,16 @@ function sleep(ms) {
 function logPayloadSize(method) {
   if (!globalThis.__payloadMetrics) return;
   const { bytes, kb, mb } = globalThis.__payloadMetrics;
-  console.log(`Upserting collection '${COLLECTION_NAME}' via ${method} | Payload size: ${Math.round(kb)} KB (${mb.toFixed(2)} MB, ${bytes} bytes)`);
-}
-
-function hashStr(str) {
-  return crypto.createHash("sha256").update(str).digest("hex");
+  const name = globalThis.__resolvedCollectionName || COLLECTION_NAME;
+  console.log(`Publishing collection '${name}' via ${method} | Payload size: ${Math.round(kb)} KB (${mb.toFixed(2)} MB, ${bytes} bytes)`);
 }
 
 function versionedName(base) {
-  const run = process.env.GITHUB_RUN_NUMBER || `${Date.now()}`;
-  return `${base} [build ${run}]`;
+  const run =
+    process.env.GITHUB_RUN_NUMBER ||
+    (process.env.GITHUB_SHA ? process.env.GITHUB_SHA.substring(0, 7) : null) ||
+    `${Date.now()}`;
+  return `${base} v${run}`;
 }
 
 async function main() {
@@ -93,61 +77,25 @@ async function main() {
     mb: Buffer.byteLength(rawPayload, "utf8") / 1024 / 1024,
   };
 
+  const resolvedName = versionedName(COLLECTION_NAME);
+  globalThis.__resolvedCollectionName = resolvedName;
+
   if (payload?.collection?.info?.name) {
-    payload.collection.info.name = COLLECTION_NAME;
+    payload.collection.info.name = resolvedName;
   }
 
   console.log(`Payload size: ${Math.round(globalThis.__payloadMetrics.kb)} KB (${globalThis.__payloadMetrics.bytes} bytes)`);
-
-  const collections = await listCollections();
-  const existing = collections.find((c) => c?.name === COLLECTION_NAME);
-
-  if (!existing) {
-    console.log("No existing collection found. Creating via POST.");
-    console.log(`Pausing ${PRE_WRITE_DELAY_MS}ms before write to avoid Postman API burst limits.`);
-    await sleep(PRE_WRITE_DELAY_MS);
-    await postCollection(payload);
-    console.log("✅ Created collection.");
-    return;
-  }
-
-  console.log("Found existing collection:", COLLECTION_NAME, "uid:", existing.uid);
-  try {
-    await fetchCollection(existing.uid);
-  } catch (e) {
-    console.warn("⚠️ Failed to fetch existing collection details.", e?.message || e);
-  }
-
-  console.log(`Pausing ${PRE_WRITE_DELAY_MS}ms before write to avoid Postman API burst limits.`);
+  console.log(`Resolved collection name: ${resolvedName}`);
+  console.log(`Pausing ${PRE_WRITE_DELAY_MS}ms before publish to avoid Postman API burst limits.`);
   await sleep(PRE_WRITE_DELAY_MS);
-
-  const putPayload = JSON.parse(JSON.stringify(payload));
-  try {
-    await putCollection(existing.uid, putPayload);
-    console.log("✅ PUT succeeded.");
-    return;
-  } catch (err) {
-    console.warn(`PUT failed (status=${err?.status || "unknown"}). Retrying once after ${PUT_RETRY_DELAY_MS}ms...`);
-  }
-
-  await sleep(PUT_RETRY_DELAY_MS);
-
-  try {
-    await putCollection(existing.uid, payload);
-    console.log("✅ PUT succeeded on retry.");
-    return;
-  } catch (err) {
-    console.warn("PUT failed twice; falling back to versioned POST.");
-    const fallbackPayload = JSON.parse(JSON.stringify(payload));
-    if (fallbackPayload?.collection?.info?.name) {
-      fallbackPayload.collection.info.name = versionedName(COLLECTION_NAME);
-    }
-    console.log(`Pausing ${PRE_WRITE_DELAY_MS}ms before versioned publish.`);
-    await sleep(PRE_WRITE_DELAY_MS);
-    await postCollection(fallbackPayload);
-    console.log(`PUT failed twice; published versioned collection via POST: ${fallbackPayload.collection.info.name}`);
-    console.log("Cleanup policy: keep last N builds; delete older versions manually or via scheduled job.");
-  }
+  const res = await postCollection(payload);
+  const uid =
+    res?.collection?.uid ||
+    res?.collectionUid ||
+    res?.data?.id ||
+    res?.uid ||
+    null;
+  console.log(`✅ Created collection '${resolvedName}' via POST${uid ? ` (uid: ${uid})` : ""}.`);
 }
 
 main().catch((err) => {
