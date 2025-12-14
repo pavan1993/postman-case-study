@@ -40,7 +40,7 @@ function envPayload(name, baseUrlValue) {
 
 async function main() {
   // We don’t have mock URL yet; put a placeholder and update later.
-  const PLACEHOLDER = "REPLACE_WITH_MOCK_BASEURL/v2";
+  const PLACEHOLDER = "REPLACE_WITH_MOCK_BASEURL";
 
   const envNames = ["Dev", "QA", "UAT", "Prod"];
   for (const env of envNames) {

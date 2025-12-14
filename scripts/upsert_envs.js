@@ -14,7 +14,7 @@ if (!API_KEY || !WORKSPACE_ID) {
 const BASE = "https://api.getpostman.com";
 
 // For demo, keep placeholder; you’ll replace with mock URL after creating mock server.
-const BASE_URL_VALUE = "REPLACE_WITH_MOCK_BASEURL/v2";
+const BASE_URL_VALUE = "REPLACE_WITH_MOCK_BASEURL";
 
 function headers() {
   return {
