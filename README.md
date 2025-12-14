@@ -34,6 +34,22 @@ It eliminates API discovery friction, reduces integration risk, and scales clean
 
 > This same flow is reused per API. No local execution is required.
 
+## Testing the JWT Mock Collection in Postman (1 Minute)
+
+The JWT Mock collection is designed to be runnable immediately using Postman’s built-in Mock Server.
+
+1. In Postman, open the **JWT Mock** collection created by the workflow.
+2. Click **Create Mock Server** for the collection (Postman → Mock Servers).
+3. Copy the generated Mock Server URL.
+4. Open the corresponding environment (Dev/QA/UAT/Prod) and set:
+   - `base_url = <Mock Server URL>`
+5. Run the collection:
+   - The pre-request script fetches a mock JWT token
+   - The token is automatically attached to all requests
+   - Requests return deterministic mock responses
+
+This allows engineers to validate auth wiring, request flow, contracts, and tests **without a live backend or IdP**.
+
 ---
 
 ## What This Delivers (At a Glance)
