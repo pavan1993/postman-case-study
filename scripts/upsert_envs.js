@@ -61,9 +61,11 @@ function envBody(name, baseUrl) {
 }
 
 async function findEnvIdByName(name) {
+  const target = name?.trim().toLowerCase();
+  if (!target) return null;
   const list = await http("GET", `${BASE}/environments`);
   const envs = list?.environments || [];
-  const match = envs.find((e) => e?.name === name);
+  const match = envs.find((e) => (e?.name || "").trim().toLowerCase() === target);
   return match?.id || match?.uid || null;
 }
 
