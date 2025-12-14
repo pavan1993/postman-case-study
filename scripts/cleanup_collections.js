@@ -14,10 +14,23 @@ if (!API_KEY || !WORKSPACE_ID) {
 const BASE_URL = 'https://api.getpostman.com';
 
 function parseBuildMetadata(name, collection) {
-  const match = name.match(/^(.*) \[build (.+)\]$/i);
-  if (!match) return null;
-  const base = match[1].trim();
-  const buildRaw = match[2].trim();
+  if (!name) return null;
+  const trimmed = name.trim();
+
+  let base = null;
+  let buildRaw = null;
+
+  const bracketMatch = trimmed.match(/^(.*) \[build (.+)\]$/i);
+  if (bracketMatch) {
+    base = bracketMatch[1].trim();
+    buildRaw = bracketMatch[2].trim();
+  } else {
+    const versionMatch = trimmed.match(/^(.*)\s+v([^\s]+)$/i);
+    if (!versionMatch) return null;
+    base = versionMatch[1].trim();
+    buildRaw = versionMatch[2].trim();
+  }
+
   if (!base) return null;
 
   let score = null;
