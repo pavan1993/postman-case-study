@@ -21,6 +21,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Resolve OpenAPI spec
+        env:
+          SPEC_URL: ${{ secrets.SPEC_URL }}
+        run: |
+          set -euo pipefail
+          mkdir -p specs/_resolved
+          RESOLVED="specs/_resolved/spec.yaml"
+          LOCAL="payment-refund-api-openapi.yaml"
+          if [ -n "${SPEC_URL}" ]; then
+            echo "SPEC_URL detected; downloading spec..."
+            curl -fsSL "${SPEC_URL}" -o "${RESOLVED}"
+            cp "${RESOLVED}" "${LOCAL}"
+            echo "Remote spec saved to ${RESOLVED}"
+          else
+            cp "${LOCAL}" "${RESOLVED}"
+            echo "SPEC_URL missing; using local spec at ${LOCAL}"
+          fi
+
       - name: Capture start timestamp
         run: echo "START_TS=$(date +%s)" >> "$GITHUB_ENV"
 
@@ -42,6 +60,7 @@ jobs:
         env:
           POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
           POSTMAN_WORKSPACE_ID: ${{ secrets.POSTMAN_WORKSPACE_ID }}
+          POSTMAN_SPEC_PATH: specs/_resolved/spec.yaml
         run: node scripts/ingest.js
 
       - name: Patch generated collection into two variants (Mock + Real)
