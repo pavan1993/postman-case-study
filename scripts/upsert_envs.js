@@ -60,11 +60,19 @@ function envBody(name, baseUrl) {
   };
 }
 
-async function findEnvIdByName(name) {
+async function listEnvironments(workspaceScoped = true) {
+  const url = new URL(`${BASE}/environments`);
+  if (workspaceScoped && WORKSPACE_ID) {
+    url.searchParams.set("workspace", WORKSPACE_ID);
+  }
+  const res = await http("GET", url.toString());
+  return res?.environments || [];
+}
+
+async function findEnvIdByName(name, { workspaceOnly = true } = {}) {
   const target = name?.trim().toLowerCase();
   if (!target) return null;
-  const list = await http("GET", `${BASE}/environments`);
-  const envs = list?.environments || [];
+  const envs = await listEnvironments(workspaceOnly);
   const match = envs.find((e) => (e?.name || "").trim().toLowerCase() === target);
   return match?.id || match?.uid || null;
 }
