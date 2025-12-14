@@ -34,7 +34,7 @@ It eliminates API discovery friction, reduces integration risk, and scales clean
 
 > This same flow is reused per API. No local execution is required.
 
-## Testing the JWT Mock Collection in Postman (1 Minute)
+## Testing the JWT Mock Collection in Postman (30 seconds)
 
 The JWT Mock collection is designed to be runnable immediately using Postman’s built-in Mock Server.
 
@@ -112,7 +112,7 @@ This allows engineers to validate auth wiring, request flow, contracts, and test
 - Manual Postman usage leads to sprawl, inconsistency, and regressions
 
 ### The Outcome
-- Time-to-first-successful-call drops to **seconds**
+- Time-to-first-successful-call drops to **seconds** (~30 seconds)
 - Collections become **predictable, governed entry points**
 - Consumers trust contracts instead of reverse-engineering APIs
 
@@ -126,6 +126,13 @@ This excludes:
 - Faster onboarding
 - MTTR reductions
 - Defect and regression avoidance
+
+####Justification for “seconds to first call”
+The “seconds” claim reflects the time required to open a published Postman collection, select the JWT Mock environment, and execute a pre-configured request that already includes authentication, base URLs, headers, and execution order.
+
+This does not assume zero learning time. It measures the first successful API response once discovery artifacts exist—removing manual steps such as reading docs, finding auth flows, constructing requests, or guessing execution order.
+
+In practice, this consistently falls well under one minute for a new engineer or consumer using the governed workspace.
 
 ### Why This Matters to Customers
 Beyond direct productivity savings, the primary value is **risk reduction and confidence**:
