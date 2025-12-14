@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import fetch from "node-fetch";
 
 const API_KEY = process.env.POSTMAN_API_KEY;
@@ -62,7 +64,7 @@ async function findEnvIdByName(name) {
   const list = await http("GET", `${BASE}/environments`);
   const envs = list?.environments || [];
   const match = envs.find((e) => e?.name === name);
-  return match?.id || null;
+  return match?.id || match?.uid || null;
 }
 
 async function createEnv(name) {
@@ -76,6 +78,7 @@ async function updateEnv(id, name) {
 
 async function main() {
   const targets = ["Dev", "QA", "UAT", "Prod"];
+  const envMap = {};
 
   for (const t of targets) {
     const name = envName(t);
@@ -84,13 +87,61 @@ async function main() {
     if (existingId) {
       console.log("Updating env:", name, "id:", existingId);
       await updateEnv(existingId, name);
+      envMap[t.toLowerCase()] = existingId;
     } else {
       console.log("Creating env:", name);
-      await createEnv(name);
+      const created = await createEnv(name);
+      const newId =
+        created?.environment?.id ||
+        created?.environment?.uid ||
+        created?.id ||
+        created?.uid ||
+        null;
+      if (newId) envMap[t.toLowerCase()] = newId;
     }
   }
 
+  await exportEnvironments(envMap);
+
   console.log("✅ Environments upserted.");
+}
+
+async function exportEnvironments(envMap) {
+  const artifactsDir = path.join(process.cwd(), "artifacts");
+  fs.mkdirSync(artifactsDir, { recursive: true });
+
+  const targets = [
+    { key: "dev", label: "Dev", file: "env.dev.json" },
+    { key: "qa", label: "QA", file: "env.qa.json" },
+    { key: "uat", label: "UAT", file: "env.uat.json" },
+    { key: "prod", label: "Prod", file: "env.prod.json" },
+  ];
+
+  for (const target of targets) {
+    const uid =
+      envMap[target.key] ||
+      (await findEnvIdByName(envName(target.label)));
+    if (!uid) {
+      console.warn(`⚠️ Missing ${target.label} environment; skipping export.`);
+      continue;
+    }
+    try {
+      const env = await http("GET", `${BASE}/environments/${uid}`);
+      if (env?.environment?.values) {
+        env.environment.values = env.environment.values.map((v) => ({
+          ...v,
+          value: "",
+          src: "",
+        }));
+      }
+      const outPath = path.join(artifactsDir, target.file);
+      fs.writeFileSync(outPath, JSON.stringify(env, null, 2));
+      console.log(`Wrote ${outPath} (uid=${uid})`);
+    } catch (err) {
+      console.warn(`⚠️ Failed to export ${target.label} environment (uid=${uid}): ${err.message}`);
+      if (process.env.POSTMAN_DEBUG === "true") throw err;
+    }
+  }
 }
 
 main().catch((e) => {
