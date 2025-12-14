@@ -65,7 +65,7 @@ This allows engineers to validate auth wiring, request flow, contracts, and test
 - `artifacts/collection.generated.json` **(IGNORE — intermediate build artifact)**
 - `artifacts/collection.jwt_mock.json` **(Use for mock server testing)**
 - `artifacts/collection.oauth2_ready.json` **(Use for IdP-ready testing)**
--`artifacts/env.*.json`**(JSON files for Dev/QA/UAT/Prod environments)**
+- `artifacts/env.*.json`**(JSON files for Dev/QA/UAT/Prod environments)**
 - `artifacts/newman-junit.xml` **(Test cases)**
 - `artifacts/summary.md` **(Test summary)**
 - `docs/contracts.md` **(Input and output contracts)**
